@@ -781,19 +781,6 @@ if section == "cascade":
 # ======================================================================
 
 if section == "blend":
-    st.markdown(f'<div class="sect">{ui.tr("bl_heading")}</div>',
-                unsafe_allow_html=True)
-    st.markdown(
-        '<p class="sub">Every property modelled here mixes linearly by mass, so '
-        'each limit becomes a linear inequality in the blend ratio and can be '
-        'solved exactly. Intersecting all of them gives the range of ratios that '
-        'satisfies the whole specification - or the pair of limits that pull in '
-        'opposite directions and make it impossible. This is value created by '
-        'chemistry rather than by trucking: a stream that fails on its own can '
-        'clear the specification blended, and nothing has to be built.</p>',
-        unsafe_allow_html=True,
-    )
-
     stream_names = materials.materials()
     b1, b2, b3 = st.columns(3)
     blend_a = b1.selectbox(ui.tr("bl_stream_a"), stream_names,
@@ -808,124 +795,114 @@ if section == "blend":
                           key="blend_spec")
 
     result = blending.blend_to_spec(blend_a, blend_b, target)
-    alone_a = conformance.grade(blend_a, target)
-    alone_b = conformance.grade(blend_b, target)
+    props_a = materials.measured_properties(blend_a)
+    props_b = materials.measured_properties(blend_b)
 
-    if not result["feasible"]:
-        st.markdown(
-            f'<div class="note loss"><strong>No blend of these two streams meets '
-            f'{target}.</strong> {result["reason"]}</div>',
-            unsafe_allow_html=True,
+    if not props_a or not props_b or blend_a == blend_b:
+        st.markdown(ui.chip_row([ui.chip(result["reason"] or
+                                         "Pick two different streams", "bad")]),
+                    unsafe_allow_html=True)
+    else:
+        # The slider is the whole screen: drag it and the bars move across the
+        # limit line. The engine's recommendation is the starting position.
+        default_f = int(round((result["f_recommended"]
+                               if result["feasible"] else 0.5) * 100))
+        mix = st.slider(
+            f"Mass fraction of {blend_a}", 0, 100, default_f, 1,
+            format="%d%%", key="blend_fraction",
+            help="Drag to change the mix. Every bar below is redrawn against its "
+                 "limit as you move it.",
         )
-        if result["blocking"]:
+        f = mix / 100.0
+        blended = blending.blend_properties(props_a, props_b, f)
+        live = conformance.grade_properties(blended, target,
+                                            material_label="blend")
+
+        if result["feasible"]:
+            window = (f'feasible {result["f_min"]:.0%} to {result["f_max"]:.0%}')
+            window_tone = "accent"
+        else:
+            blocked = result["blocking"][0] if result["blocking"] else None
+            window = ("no feasible blend"
+                      + (f' - {materials.PROPERTY_LABELS.get(blocked["property"], blocked["property"])} '
+                         "cannot be met" if blocked else ""))
+            window_tone = "bad"
+
+        verdict = (f'{ui.GLYPH_PASS} PASSES at {f:.0%} {blend_a.split(" (")[0]}'
+                   if live["passes"] else
+                   f'{ui.GLYPH_FAIL} FAILS at {f:.0%} - '
+                   f'{len(live["failures"])} limit(s) outside')
+        st.markdown(ui.chip_row([
+            ui.chip(verdict, "good" if live["passes"] else "bad"),
+            ui.chip(f'grade {live["grade"]}', "good" if live["passes"] else "bad"),
+            ui.chip(window, window_tone),
+            ui.chip(f'{engine.inr(live["value_inr_t"])}/t if it qualifies', "accent"),
+            ui.chip(f'{live["standard"]}'),
+        ]), unsafe_allow_html=True)
+
+        fig = bullet_chart(live)
+        if fig is not None:
+            st.plotly_chart(fig, width="stretch", config={"displaylogo": False})
+
+        alone_a = conformance.grade(blend_a, target)
+        alone_b = conformance.grade(blend_b, target)
+        st.markdown(ui.chip_row([
+            ui.chip(f'{blend_a.split(" (")[0]} alone: '
+                    f'{ui.GLYPH_PASS if alone_a["passes"] else ui.GLYPH_FAIL} '
+                    f'{alone_a["grade"]}',
+                    "good" if alone_a["passes"] else "bad"),
+            ui.chip(f'{blend_b.split(" (")[0]} alone: '
+                    f'{ui.GLYPH_PASS if alone_b["passes"] else ui.GLYPH_FAIL} '
+                    f'{alone_b["grade"]}',
+                    "good" if alone_b["passes"] else "bad"),
+            ui.chip(f'blend at {f:.0%}: '
+                    f'{ui.GLYPH_PASS if live["passes"] else ui.GLYPH_FAIL} '
+                    f'{live["grade"]}',
+                    "good" if live["passes"] else "bad"),
+        ]), unsafe_allow_html=True)
+
+        with st.expander("Per-limit feasible range, and what each stream brings",
+                         expanded=False):
+            rows = []
+            for interval, check in zip(result["intervals"], live["results"]):
+                rows.append({
+                    "property": " + ".join(
+                        materials.PROPERTY_LABELS.get(part.strip(), part.strip())
+                        for part in interval["property"].split("+")),
+                    "required": f'{interval["operator"]} {interval["threshold"]:g}',
+                    blend_a[:22]: interval["value_a"],
+                    blend_b[:22]: interval["value_b"],
+                    "blend now": check["actual"],
+                    "allows f from": (interval["lo"] if interval["feasible"] else None),
+                    "to": (interval["hi"] if interval["feasible"] else None),
+                    "verdict": "PASS" if check["passes"] else "FAIL",
+                })
             st.dataframe(
-                pd.DataFrame([{
-                    "property": materials.PROPERTY_LABELS.get(
-                        b["property"], b["property"]),
-                    "required": f'{b["operator"]} {b["threshold"]:g}',
-                    f"{blend_a[:22]}": b["value_a"],
-                    f"{blend_b[:22]}": b["value_b"],
-                    "why": (b["reason"] or
-                            f'satisfied only for blend ratios '
-                            f'{b["lo"]:.0%} to {b["hi"]:.0%}'),
-                } for b in result["blocking"]]),
-                hide_index=True, width="stretch",
+                pd.DataFrame(rows), hide_index=True, width="stretch",
                 column_config={
                     "property": st.column_config.TextColumn("Property",
                                                             width="medium"),
                     "required": st.column_config.TextColumn("Required",
                                                             width="small"),
-                    "why": st.column_config.TextColumn("Why it cannot be met",
-                                                       width="large"),
+                    blend_a[:22]: st.column_config.NumberColumn(format="%.4g"),
+                    blend_b[:22]: st.column_config.NumberColumn(format="%.4g"),
+                    "blend now": st.column_config.NumberColumn(format="%.4g"),
+                    "allows f from": st.column_config.NumberColumn(format="%.0f%%",
+                                                                   width="small"),
+                    "to": st.column_config.NumberColumn(format="%.0f%%",
+                                                        width="small"),
+                    "verdict": st.column_config.TextColumn("Verdict", width="small"),
                 },
             )
-        st.markdown(
-            '<p class="caveat">Two limits that are each satisfiable on their own '
-            'can still be jointly impossible: one needs more of A and the other '
-            'needs less. That is what the rows above show.</p>',
-            unsafe_allow_html=True,
-        )
-    else:
-        f = result["f_recommended"]
-        report = result["report"]
-        ui.stat_row([
-            ui.stat_block(ui.tr("bl_recommended"),
-                          f'{f:.0%} / {1 - f:.0%}',
-                          f'{blend_a[:26]} / {blend_b[:26]}'),
-            ui.stat_block(ui.tr("bl_feasible"),
-                          f'{result["f_min"]:.0%} - {result["f_max"]:.0%}',
-                          f'mass fraction of {blend_a[:28]}'),
-            ui.stat_block("Blend verdict",
-                          ("PASS grade " + report["grade"]) if report["passes"]
-                          else "FAIL",
-                          target[:44]),
-            ui.stat_block("Value of the target",
-                          engine.inr(report["value_inr_t"]) + " /t",
-                          report["standard"]),
-        ], columns=4)
+            st.markdown(
+                '<p class="caveat">Linear mixing is sound for composition and '
+                'reasonable for fineness and loss on ignition. It does not predict '
+                'lime reactivity, soundness or strength activity index, which the '
+                'standards also require. A feasible blend is a candidate for a '
+                'trial mix, not a certificate.</p>',
+                unsafe_allow_html=True,
+            )
 
-        headline = (
-            f'<strong>Blend {f:.0%} {blend_a} with {1 - f:.0%} {blend_b} and the '
-            f'mix meets {target}</strong>, at grade {report["grade"]}. '
-        )
-        if not alone_a["passes"] and alone_b["passes"]:
-            headline += (f'{blend_a} cannot meet this specification on its own; '
-                         f'the blend places {f:.0%} of it anyway.')
-        elif not alone_a["passes"] and not alone_b["passes"]:
-            headline += "Neither stream meets it alone."
-        st.markdown(f'<div class="note">{headline}</div>', unsafe_allow_html=True)
-        st.markdown(
-            f'<p class="caveat">Ratio chosen by {result["rationale"]}. '
-            'Rounded inward to the nearest 1% so a dosing error cannot push the '
-            'mix outside the specification.</p>',
-            unsafe_allow_html=True,
-        )
-
-        st.markdown(f'<div class="sect">{ui.tr("bl_before_after")}</div>',
-                    unsafe_allow_html=True)
-        props_a = materials.measured_properties(blend_a)
-        props_b = materials.measured_properties(blend_b)
-        rows = []
-        for check in report["results"]:
-            expression = check["property"]
-            value_a, _ = conformance.resolve(expression, props_a)
-            value_b, _ = conformance.resolve(expression, props_b)
-            rows.append({
-                "property": " + ".join(
-                    materials.PROPERTY_LABELS.get(p.strip(), p.strip())
-                    for p in expression.split("+")),
-                "required": f'{check["operator"]} {check["threshold"]:g}',
-                blend_a[:24]: value_a,
-                blend_b[:24]: value_b,
-                "blend": check["actual"],
-                "headroom %": (check["headroom_frac"] * 100
-                               if check["headroom_frac"] is not None else None),
-                "verdict": "PASS" if check["passes"] else "FAIL",
-            })
-        st.dataframe(
-            pd.DataFrame(rows), hide_index=True, width="stretch",
-            column_config={
-                "property": st.column_config.TextColumn("Property", width="medium"),
-                "required": st.column_config.TextColumn("Required", width="small"),
-                blend_a[:24]: st.column_config.NumberColumn(format="%.4g"),
-                blend_b[:24]: st.column_config.NumberColumn(format="%.4g"),
-                "blend": st.column_config.NumberColumn("Blend", format="%.4g"),
-                "headroom %": st.column_config.NumberColumn("Headroom %",
-                                                            format="%.1f",
-                                                            width="small"),
-                "verdict": st.column_config.TextColumn("Verdict", width="small"),
-            },
-        )
-
-    st.markdown(
-        '<p class="caveat"><strong>What this does not prove.</strong> Linear '
-        'mixing is sound for composition and reasonable for fineness and loss on '
-        'ignition. It is not a substitute for the performance tests the standards '
-        'also require - lime reactivity, soundness, strength activity index - '
-        'which cannot be predicted from an assay. A feasible blend here is a '
-        'candidate for a trial mix, not a certificate.</p>',
-        unsafe_allow_html=True,
-    )
 
 # ======================================================================
 # 0c. Carbon and CCTS
