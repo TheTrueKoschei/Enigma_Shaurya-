@@ -338,13 +338,37 @@ def render_audit(row):
     )
 
 # ======================================================================
-# Chrome: utility bar, masthead, sidebar
+# Chrome: utility bar, masthead, sidebar navigation
 # ======================================================================
+
+# Short labels. The old tab strip overflowed into a horizontal scroll once the
+# materials layer was added, which reads as unfinished; a vertical nav carries
+# ten sections without any of them hiding.
+SECTIONS = [
+    ("grading", "Grading"),
+    ("cascade", "Value cascade"),
+    ("blend", "Blending"),
+    ("carbon", "Carbon & CCTS"),
+    ("mine", "My plant"),
+    ("network", "Network"),
+    ("matches", "Matches"),
+    ("chains", "Chains"),
+    ("gaps", "Gaps"),
+    ("method", "Method"),
+]
+SECTION_KEYS = [key for key, _ in SECTIONS]
+SECTION_LABELS = dict(SECTIONS)
 
 ui.utility_bar()
 ui.masthead()
 
 with st.sidebar:
+    st.markdown('<p class="navtitle">Sections</p>', unsafe_allow_html=True)
+    section = st.radio(
+        "Section", SECTION_KEYS, format_func=lambda k: SECTION_LABELS[k],
+        label_visibility="collapsed", key="nav_section",
+    )
+    st.markdown("---")
     st.markdown(f"### {ui.tr('sb_registry')}")
     source = st.radio("Source", [ui.tr("sb_sample"), ui.tr("sb_upload")],
                       label_visibility="collapsed")
@@ -419,12 +443,11 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-(tab_grading, tab_blend, tab_carbon, tab_mine, tab_network, tab_matches,
- tab_chains, tab_gaps, tab_method) = st.tabs([
-    ui.tr("tab_grading"), ui.tr("tab_blend"), ui.tr("tab_carbon"),
-    ui.tr("tab_mine"), ui.tr("tab_network"), ui.tr("tab_matches"),
-    ui.tr("tab_chains"), ui.tr("tab_gaps"), ui.tr("tab_method"),
-])
+st.markdown(
+    f'<div class="breadcrumb">{ui.tr("home")} &rsaquo; '
+    f'<b>{SECTION_LABELS[section]}</b></div>',
+    unsafe_allow_html=True,
+)
 
 QUALIFY_COLOUR = ui.SUPPLIER_COLOUR       # navy - qualifies
 BLOCKED_COLOUR = "#b9c0cc"                # grey - does not
@@ -474,8 +497,7 @@ def limit_table(report: dict) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-with tab_grading:
-    ui.breadcrumb("tab_grading")
+if section == "grading":
     st.markdown(f'<div class="sect">{ui.tr("mg_heading")}</div>',
                 unsafe_allow_html=True)
     st.markdown(
@@ -708,8 +730,7 @@ with tab_grading:
 # 0b. Blend to specification
 # ======================================================================
 
-with tab_blend:
-    ui.breadcrumb("tab_blend")
+if section == "blend":
     st.markdown(f'<div class="sect">{ui.tr("bl_heading")}</div>',
                 unsafe_allow_html=True)
     st.markdown(
@@ -860,8 +881,7 @@ with tab_blend:
 # 0c. Carbon and CCTS
 # ======================================================================
 
-with tab_carbon:
-    ui.breadcrumb("tab_carbon")
+if section == "carbon":
     st.markdown(f'<div class="sect">{ui.tr("cb_heading")}</div>',
                 unsafe_allow_html=True)
     st.markdown(
@@ -1013,8 +1033,7 @@ with tab_carbon:
 # 1. Find my matches
 # ======================================================================
 
-with tab_mine:
-    ui.breadcrumb("tab_mine")
+if section == "mine":
     st.markdown(f'<div class="sect">{ui.tr("mine_heading")}</div>', unsafe_allow_html=True)
     st.markdown(
         '<p class="sub">Pick what you make or what you need, say roughly how much and '
@@ -1188,8 +1207,7 @@ with tab_mine:
 # 2. Exchange network
 # ======================================================================
 
-with tab_network:
-    ui.breadcrumb("tab_network")
+if section == "network":
     if matches.empty:
         st.info("No exchanges clear the current threshold, so there is no network to draw.")
     else:
@@ -1384,8 +1402,7 @@ with tab_network:
 # 3. Ranked matches
 # ======================================================================
 
-with tab_matches:
-    ui.breadcrumb("tab_matches")
+if section == "matches":
     if matches.empty:
         st.info("No exchanges clear the current threshold.")
     else:
@@ -1442,8 +1459,7 @@ with tab_matches:
 # 4. Chains and impact
 # ======================================================================
 
-with tab_chains:
-    ui.breadcrumb("tab_chains")
+if section == "chains":
     st.markdown(f'<div class="sect">{ui.tr("chains_heading")}</div>',
                 unsafe_allow_html=True)
     st.markdown(
@@ -1576,8 +1592,7 @@ with tab_chains:
 # 5. Gap analysis
 # ======================================================================
 
-with tab_gaps:
-    ui.breadcrumb("tab_gaps")
+if section == "gaps":
     st.markdown(f'<div class="sect">{ui.tr("gaps_heading")}</div>', unsafe_allow_html=True)
     st.markdown(
         '<p class="sub">These are not errors. Each is a stream someone is paying to dispose '
@@ -1719,8 +1734,7 @@ with tab_gaps:
                 },
             )
 
-with tab_method:
-    ui.breadcrumb("tab_method")
+if section == "method":
     st.markdown(f'<div class="sect">{ui.tr("method_scoring")}</div>',
                 unsafe_allow_html=True)
     st.markdown(

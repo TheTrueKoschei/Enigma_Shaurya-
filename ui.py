@@ -29,6 +29,42 @@ LOSS_COLOUR = "#d03b3b"          # status: critical
 SAFFRON = "#ff9933"
 INDIA_GREEN = "#138808"
 
+# ----------------------------------------------------------------------
+# Status colour language. Learned once on the grading screen, then every
+# other screen reads itself:
+#
+#   green  = passes / positive value
+#   amber  = marginal / caution
+#   red    = fails / negative value
+#   navy   = neutral data, no judgement attached
+#
+# Green and red are 4.1 Delta E apart under deuteranopia, which is well below
+# the safe floor - roughly one man in twelve cannot separate them. So NOTHING
+# in this interface may carry pass/fail on colour alone: every status mark is
+# paired with a glyph and a word. That is a hard rule, not a preference, and
+# it is why the components below always take a label.
+#
+# Amber sits at 1.8:1 against white, so it gets a darker outline wherever it
+# is used as a fill, to keep the shape visible without shifting the hue.
+# ----------------------------------------------------------------------
+STATUS_GOOD = "#0ca30c"
+STATUS_WARN = "#fab219"
+STATUS_WARN_EDGE = "#8a6100"
+STATUS_BAD = "#d03b3b"
+ACCENT = "#1f5fa9"
+NEUTRAL_GREY = "#b9c0cc"
+
+GLYPH_PASS = "&#10003;"          # check mark
+GLYPH_FAIL = "&#10007;"          # ballot X
+GLYPH_LOCK = "&#128274;"         # padlock, for a rung not reached
+
+
+def status_colour(passes: bool, marginal: bool = False) -> str:
+    """The one place a pass/fail becomes a colour."""
+    if not passes:
+        return STATUS_BAD
+    return STATUS_WARN if marginal else STATUS_GOOD
+
 # Sequential blue for magnitude, light to dark. On a white surface the lightest
 # step recedes into the page, so a state with no activity reads as empty.
 BLUE_SEQUENTIAL = [
@@ -177,6 +213,59 @@ def inject_styles() -> None:
         div[data-testid="stDataFrame"] {{ font-variant-numeric: tabular-nums; }}
         hr {{ border-color: var(--line); }}
 
+        /* ---------- chips, badges and card grids ---------- */
+        .chips {{ display: flex; flex-wrap: wrap; gap: .35rem; margin: .1rem 0 .7rem; }}
+        .chip {{ display: inline-flex; align-items: center; gap: .3rem;
+          font-size: .78rem; font-weight: 600; padding: .22rem .55rem;
+          border: var(--line-w) solid var(--line); background: #f2f4f7;
+          color: var(--ink); border-radius: 2px; white-space: nowrap; }}
+        .chip.good {{ border-color: {STATUS_GOOD}; color: #07610a;
+          background: rgba(12,163,12,.10); }}
+        .chip.warn {{ border-color: {STATUS_WARN_EDGE}; color: #6b4c00;
+          background: rgba(250,178,25,.16); }}
+        .chip.bad  {{ border-color: {STATUS_BAD}; color: #8f1f1f;
+          background: rgba(208,59,59,.10); }}
+        .chip.accent {{ border-color: {ACCENT}; color: {ACCENT};
+          background: rgba(31,95,169,.08); }}
+
+        .badge {{ display: inline-flex; align-items: center; justify-content: center;
+          width: 76px; height: 76px; border-radius: 50%; color: #ffffff;
+          font-size: 2.3rem; font-weight: 700; line-height: 1; flex: none; }}
+        .badgerow {{ display: flex; align-items: center; gap: 1rem;
+          background: var(--surface); border: var(--line-w) solid var(--line);
+          padding: .9rem 1.1rem; margin-bottom: .7rem; }}
+        .badgerow .t1 {{ font-size: 1.05rem; font-weight: 700; color: var(--ink);
+          line-height: 1.3; }}
+        .badgerow .t2 {{ font-size: .82rem; color: var(--muted); margin-top: .2rem; }}
+        .badgerow .t3 {{ font-size: .82rem; font-weight: 700; margin-top: .3rem; }}
+
+        .cards {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
+          gap: .5rem; margin-bottom: .6rem; }}
+        .speccard {{ border: var(--line-w) solid var(--line); background: var(--surface);
+          padding: .55rem .65rem; border-left-width: 4px; }}
+        .speccard .nm {{ font-size: .78rem; font-weight: 600; line-height: 1.3;
+          color: var(--ink); height: 2.6em; overflow: hidden; }}
+        .speccard .rw {{ display: flex; align-items: baseline; justify-content: space-between;
+          margin-top: .35rem; }}
+        .speccard .vd {{ font-size: .74rem; font-weight: 700; }}
+        .speccard .pr {{ font-size: .86rem; font-weight: 700; color: var(--ink); }}
+
+        /* ---------- sidebar navigation ---------- */
+        .navtitle {{ font-size: .72rem; text-transform: uppercase; letter-spacing: .07em;
+          color: var(--muted); font-weight: 700; margin: .1rem 0 .3rem; }}
+        section[data-testid="stSidebar"] div[role="radiogroup"] {{ gap: 0; }}
+        section[data-testid="stSidebar"] div[role="radiogroup"] > label {{
+          width: 100%; padding: .42rem .55rem; margin: 0;
+          border-left: 3px solid transparent; border-bottom: 1px solid var(--line); }}
+        section[data-testid="stSidebar"] div[role="radiogroup"] > label:hover {{
+          background: #eef2f7; }}
+        section[data-testid="stSidebar"] div[role="radiogroup"] > label p {{
+          font-size: .86rem; font-weight: 600; }}
+        section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {{
+          background: rgba(31,95,169,.10); border-left-color: {ACCENT}; }}
+        section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) p {{
+          color: {ACCENT}; }}
+
         /* ---------- keyboard focus, deliberately loud ---------- */
         a:focus-visible, button:focus-visible, input:focus-visible,
         select:focus-visible, textarea:focus-visible, summary:focus-visible,
@@ -247,6 +336,48 @@ def breadcrumb(section_key: str) -> None:
         f'<b>{tr(section_key)}</b></div>',
         unsafe_allow_html=True,
     )
+
+
+def chip(text: str, tone: str = "") -> str:
+    """A small labelled tag. `tone` is good / warn / bad / accent, or empty."""
+    return f'<span class="chip {tone}">{text}</span>'
+
+
+def chip_row(chips: list) -> str:
+    return '<div class="chips">' + "".join(chips) + '</div>'
+
+
+def grade_badge(letter: str, title: str, subtitle: str, verdict: str,
+                passes: bool, marginal: bool = False) -> str:
+    """The hero verdict: one letter, and the words that must accompany it.
+
+    The glyph and the word carry the verdict; the colour only reinforces it.
+    """
+    colour = status_colour(passes, marginal)
+    glyph = GLYPH_PASS if passes else GLYPH_FAIL
+    return (
+        f'<div class="badgerow"><div class="badge" style="background:{colour}">'
+        f'{letter}</div><div><div class="t1">{title}</div>'
+        f'<div class="t2">{subtitle}</div>'
+        f'<div class="t3" style="color:{colour}">{glyph} {verdict}</div></div></div>'
+    )
+
+
+def spec_card(name: str, passes: bool, letter: str, price: str,
+              marginal: bool = False) -> str:
+    colour = status_colour(passes, marginal)
+    glyph = GLYPH_PASS if passes else GLYPH_FAIL
+    word = "PASS" if passes else "FAIL"
+    return (
+        f'<div class="speccard" style="border-left-color:{colour}">'
+        f'<div class="nm">{name}</div><div class="rw">'
+        f'<span class="vd" style="color:{colour}">{glyph} {word} &middot; {letter}</span>'
+        f'<span class="pr">{price}</span></div></div>'
+    )
+
+
+def card_grid(cards: list) -> str:
+    return '<div class="cards">' + "".join(cards) + '</div>'
 
 
 def stat_block(label: str, value: str, sub: str = "", bad: bool = False) -> str:
