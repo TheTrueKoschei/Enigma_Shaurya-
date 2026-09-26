@@ -1128,12 +1128,9 @@ if section == "carbon":
     st.markdown(f'<div class="sect">{ui.tr("cb_heading")}</div>',
                 unsafe_allow_html=True)
     st.markdown(
-        '<p class="sub">India\'s Carbon Credit Trading Scheme sets '
-        '<strong>intensity</strong> targets - tCO2e per tonne of product - not '
-        'absolute caps. Raising the supplementary cementitious share lowers the '
-        'clinker factor, which lowers the intensity the plant is legally measured '
-        'on. That is why a by-product is worth more than the clinker it displaces: '
-        'it also moves the plant\'s compliance position.</p>',
+        '<p class="sub">CCTS targets are intensity, not tonnage - so raising the '
+        'supplementary cementitious share moves the number the plant is legally '
+        'measured on.</p>',
         unsafe_allow_html=True,
     )
 
@@ -1256,21 +1253,22 @@ if section == "carbon":
                                                                  format="%.0f"),
         },
     )
-    st.markdown(
-        f'<p class="caveat">The SCM share is raised to 35%, the ceiling IS 1489 '
-        'allows for fly ash in Portland pozzolana cement. The cheapest stream is '
-        'the one that does not meet IS 3812 - which is the whole point of reading '
-        'the quality margin and the cost in the same table. '
-        f'<strong>{carbon.SCHEME_NOTES}</strong></p>'
-        f'<p class="caveat">Intensity model: clinker factor = 1 - SCM share - '
-        f'{carbon.GYPSUM_SHARE:.0%} gypsum, at '
-        f'{carbon.CLINKER_EMISSION_FACTOR} tCO2/t clinker (about 0.53 from '
-        'limestone calcination, which no fuel switch removes, plus kiln fuel), '
-        f'plus {carbon.CEMENT_OTHER_EMISSIONS} tCO2/t for grinding power. Those '
-        'are published sector averages, not this plant\'s verified figures, and '
-        f'the target shown is illustrative. {profile.get("note", "")}</p>',
-        unsafe_allow_html=True,
-    )
+    with st.expander("Model, constants and what is assumed", expanded=False):
+        st.markdown(ui.chip_row([
+            ui.chip("SCM raised to 35%, the IS 1489 ceiling", "accent"),
+            ui.chip(f'clinker {carbon.CLINKER_EMISSION_FACTOR} tCO2/t', "accent"),
+            ui.chip(f'grinding {carbon.CEMENT_OTHER_EMISSIONS} tCO2/t', "accent"),
+            ui.chip(f'gypsum {carbon.GYPSUM_SHARE:.0%}', "accent"),
+            ui.chip("certificate price is an assumption", "warn"),
+            ui.chip("targets illustrative, not notified", "warn"),
+            ui.chip("sector averages, not verified plant data", "warn"),
+        ]), unsafe_allow_html=True)
+        st.markdown(
+            f'<p class="caveat">The cheapest stream is the one that does not meet '
+            'IS 3812, which is why cost and quality margin belong in the same '
+            f'table. {carbon.SCHEME_NOTES} {profile.get("note", "")}</p>',
+            unsafe_allow_html=True,
+        )
 
 # ======================================================================
 # 1. Find my matches
@@ -1279,10 +1277,8 @@ if section == "carbon":
 if section == "mine":
     st.markdown(f'<div class="sect">{ui.tr("mine_heading")}</div>', unsafe_allow_html=True)
     st.markdown(
-        '<p class="sub">Pick what you make or what you need, say roughly how much and '
-        'where you are, and every facility in the registry is ranked as a partner - scored '
-        'by the same five factors as everything else in this tool, so the numbers are '
-        'comparable.</p>',
+        '<p class="sub">Describe a plant and every facility in the registry is ranked '
+        'as a partner, on the same five factors as everything else here.</p>',
         unsafe_allow_html=True,
     )
 
@@ -1310,9 +1306,9 @@ if section == "mine":
                 key="my_sector_sup",
                 help="Used for the registry only - what you offer is decided by the "
                      "by-product, not by your sector.")
-            st.markdown(
-                f'<p class="caveat">Sectors that can take {material}: '
-                f'{", ".join(takers) if takers else "none recorded"}.</p>',
+            st.markdown(ui.chip_row(
+                [ui.chip(f'taken by {sector_name}', "accent") for sector_name in takers]
+                or [ui.chip("no sector recorded takes this stream", "bad")]),
                 unsafe_allow_html=True)
         else:
             sector = st.selectbox(
@@ -1393,10 +1389,7 @@ if section == "mine":
             k4.metric(ui.tr("mine_best_co2"), engine.tonnes(best["co2_avoided_t"]))
 
             st.markdown(
-                f'<div class="sect">{ui.tr("mine_ranked")} &mdash; {len(mine)}</div>'
-                '<p class="sub">Ranked by the same engine score used everywhere else: '
-                'quantity 0.30, proximity 0.28, processing 0.16, timing 0.14, compliance '
-                '0.12. Sort any column by clicking its header.</p>',
+                f'<div class="sect">{ui.tr("mine_ranked")} &mdash; {len(mine)}</div>',
                 unsafe_allow_html=True,
             )
 
@@ -1440,11 +1433,9 @@ if section == "mine":
             with st.expander(ui.tr("audit"), expanded=False):
                 render_audit(chosen)
     else:
-        st.markdown(
-            f'<p class="caveat">Fill in the fields above and press '
-            f'<strong>{ui.tr("btn_rank")}</strong>.</p>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(ui.chip_row([
+            ui.chip(f'fill in the fields, then press {ui.tr("btn_rank")}', "accent"),
+        ]), unsafe_allow_html=True)
 
 # ======================================================================
 # 2. Exchange network
@@ -1641,17 +1632,14 @@ if section == "network":
                             format="%.0f"),
                     },
                 )
-            st.markdown(
-                f'<p class="caveat"><strong>{len(view)}</strong> flow(s) drawn. Thickness '
-                'and opacity scale with score; dotted red lines lose money. Hover any state '
-                'for its totals, drag to pan, scroll to zoom.</p>'
-                '<p class="caveat">Lines are straight-line links, not routed roads - '
-                f'scoring uses straight-line distance inflated '
-                f'{engine.ROAD_CIRCUITY_FACTOR:.2f}x. State boundaries follow the Survey of '
-                'India convention and are bundled with the app, so nothing is fetched from '
-                'the internet to draw this map.</p>',
-                unsafe_allow_html=True,
-            )
+            st.markdown(ui.chip_row([
+                ui.chip(f'{len(view)} flows drawn', "accent"),
+                ui.chip("thickness = score"),
+                ui.chip("dotted red = loses money", "bad"),
+                ui.chip("drag to pan, scroll to zoom"),
+                ui.chip(f'straight-line x {engine.ROAD_CIRCUITY_FACTOR:.2f}', "warn"),
+                ui.chip("Survey of India boundary, bundled offline"),
+            ]), unsafe_allow_html=True)
 
 # ======================================================================
 # 3. Ranked matches
@@ -1718,9 +1706,8 @@ if section == "chains":
     st.markdown(f'<div class="sect">{ui.tr("chains_heading")}</div>',
                 unsafe_allow_html=True)
     st.markdown(
-        '<p class="sub">Pairwise scoring says which exchanges are practical. It does not '
-        'say how to run them all together, and it cannot see an arrangement that only '
-        'makes sense through a third plant. These two passes do.</p>',
+        '<p class="sub">Pairwise scoring cannot see an arrangement that only works '
+        'through a third plant, or how to run them all at once. These two passes can.</p>',
         unsafe_allow_html=True,
     )
 
@@ -1750,15 +1737,11 @@ if section == "chains":
                       ui.tr("per_year")),
     ], columns=5)
 
-    st.markdown(
-        '<p class="caveat">Circularity is the share of by-product tonnage in this registry '
-        'that actually finds a home. The denominator is every tonne offered, including the '
-        'streams with no viable receiver, so it is deliberately hard to move. Virgin '
-        'material avoided applies each substitution ratio to the tonnage placed - it is the '
-        'quarrying, mining and growing that does not have to happen. Water footprint is not '
-        'modelled: there is no defensible per-tonne figure for most of these streams.</p>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(ui.chip_row([
+        ui.chip("denominator is every tonne offered, gaps included", "accent"),
+        ui.chip("virgin avoided = tonnage x substitution ratio", "accent"),
+        ui.chip("water footprint not modelled", "warn"),
+    ]), unsafe_allow_html=True)
 
     st.markdown(f'<div class="sect">{ui.tr("opt_vs_greedy")}</div>',
                 unsafe_allow_html=True)
@@ -1770,26 +1753,19 @@ if section == "chains":
     o3.metric("Exchanges left at zero", f"{opt_report['dropped']:,}",
               help="The optimiser is free to use none of an exchange. Anything that loses "
                    "money is dropped on its own, without a rule telling it to.")
-    st.markdown(
-        f'<p class="caveat">Solver: {opt_report["solver"]}. {opt_report["status"]} '
-        'The objective is total net value per year subject to every supplier\'s output, '
-        'every receiver\'s intake, and each receiver\'s ceiling for a given material. '
-        'Both plans are feasible; neither is a plan anyone has agreed to.</p>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(ui.chip_row([
+        ui.chip(f'solver: {opt_report["solver"]}', "accent"),
+        ui.chip("maximises net value subject to supply, intake and ceilings"),
+        ui.chip("both plans feasible; neither agreed by anyone", "warn"),
+    ]), unsafe_allow_html=True)
 
     st.markdown("---")
     st.markdown(f'<div class="sect">{ui.tr("chains_found")} &mdash; {len(chains)}</div>',
                 unsafe_allow_html=True)
-    st.markdown(
-        '<p class="sub">A chain is one plant receiving a by-product and placing its own, '
-        'so the exchanges only make sense read together. A pair-at-a-time search cannot see '
-        'them, and they are what an industrial park is actually built around. Each hop must '
-        'move a different material - otherwise it is a stream being passed along, not a '
-        'plant transforming it - and no facility appears twice. Ranked by the weakest link, '
-        'because a chain is only as real as its worst exchange.</p>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(ui.chip_row([
+        ui.chip("one plant receives a by-product and places its own", "accent"),
+        ui.chip("ranked by the weakest link"),
+    ]), unsafe_allow_html=True)
 
     if chains.empty:
         st.info(
@@ -1836,12 +1812,11 @@ if section == "chains":
         c1.metric("Weakest link", f"{chain['weakest_score']:.1f}")
         c2.metric("Chain net value", engine.inr(chain["total_net_value"]))
         c3.metric("Chain CO2 avoided", engine.tonnes(chain["total_co2_t"]))
-        st.markdown(
-            '<p class="caveat">Chain totals add the individual exchanges, which overstates '
-            'them if the hops compete for the same tonnage - read the optimised allocation '
-            'above for what the network can actually run at once.</p>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(ui.chip_row([
+            ui.chip("each hop moves a different material"),
+            ui.chip("no facility appears twice"),
+            ui.chip("totals overstate if hops share tonnage", "warn"),
+        ]), unsafe_allow_html=True)
 
 # ======================================================================
 # 5. Gap analysis
@@ -1850,9 +1825,8 @@ if section == "chains":
 if section == "gaps":
     st.markdown(f'<div class="sect">{ui.tr("gaps_heading")}</div>', unsafe_allow_html=True)
     st.markdown(
-        '<p class="sub">These are not errors. Each is a stream someone is paying to dispose '
-        'of, with no receiver in this registry that clears the gates - which is exactly '
-        'where a new processing or aggregation facility would pay for itself.</p>',
+        '<p class="sub">Not errors - streams someone is paying to dispose of, which is '
+        'where a new facility would pay for itself.</p>',
         unsafe_allow_html=True,
     )
 
@@ -1918,14 +1892,11 @@ if section == "gaps":
 
         st.markdown(f'<div class="sect">{ui.tr("gaps_resembles")}</div>',
                     unsafe_allow_html=True)
-        st.markdown(
-            '<p class="sub">The substitution table can only match a stream it has heard '
-            'of. This compares the by-product\'s measured properties against every material '
-            'the knowledge base does know and reports the closest, with the properties that '
-            'drive the resemblance and the one that does not. It is a lead to test, never a '
-            'scored match - nothing here touches the score or the valuation.</p>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(ui.chip_row([
+            ui.chip("compared on measured properties, not names", "accent"),
+            ui.chip("a lead to test, never a scored match", "warn"),
+            ui.chip("touches neither the score nor the valuation", "warn"),
+        ]), unsafe_allow_html=True)
         similar = engine.analogues(gap["material"], top_n=5)
         if similar.empty:
             st.info(
@@ -1952,16 +1923,14 @@ if section == "gaps":
                 },
             )
             best = similar.iloc[0]
-            st.markdown(
-                f'<p class="caveat">Closest analogue: <strong>{best["material"]}</strong> at '
-                f'{best["similarity"]:.0%} resemblance, agreeing on '
-                f'{best["shared_properties"]}, differing most on '
-                f'{best["biggest_difference"]}. It is accepted by '
-                f'{best["accepting_sectors"]}. The next step is a laboratory analysis of the '
-                'real material against that sector\'s specification - resemblance on paper '
-                'is a reason to test, not a reason to sign.</p>',
-                unsafe_allow_html=True,
-            )
+            st.markdown(ui.chip_row([
+                ui.chip(f'closest: {best["material"]}', "accent"),
+                ui.chip(f'{best["similarity"]:.0%} resemblance', "accent"),
+                ui.chip(f'agrees on {best["shared_properties"]}', "good"),
+                ui.chip(f'differs on {best["biggest_difference"]}', "warn"),
+                ui.chip(f'taken by {best["accepting_sectors"]}'),
+                ui.chip("test before you sign", "warn"),
+            ]), unsafe_allow_html=True)
 
         uses = kb.uses_for(gap["material"])
         st.markdown(f'<div class="sect">{ui.tr("gaps_uses")}</div>', unsafe_allow_html=True)
