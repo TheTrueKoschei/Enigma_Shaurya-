@@ -1,16 +1,16 @@
 [theme]
-base = "dark"
-primaryColor = "#2bd99b"
-backgroundColor = "#0b0e14"
-secondaryBackgroundColor = "#131824"
-textColor = "#e9edf5"
+base = "light"
+primaryColor = "#0b4f8a"
+backgroundColor = "#f5f6f8"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#1a1f2b"
 font = "sans serif"
 
 [server]
 headless = true
 
 [browser]
-# No usage telemetry. With this off the only request the app makes to the
-# outside world is the Google Fonts stylesheet, which is purely cosmetic and
+# No usage telemetry. The only outbound request the app makes is the Google
+# Fonts stylesheet (Noto Sans and Noto Sans Devanagari), which is cosmetic and
 # falls back to system fonts when there is no connection.
 gatherUsageStats = false

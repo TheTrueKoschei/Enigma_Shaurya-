@@ -123,8 +123,11 @@ COLUMN_ALIASES = {
     "hazardous_permit": "authorised_hazardous",
 }
 
-# India's bounding box, used only to warn about coordinates, never to drop them.
-INDIA_BOUNDS = {"lat_min": 6.0, "lat_max": 37.0, "lon_min": 67.0, "lon_max": 98.0}
+# India's bounding box, used to frame the map and to warn about coordinates -
+# never to drop them. The northern limit clears 37.05 N so the full extent of
+# Jammu and Kashmir and Ladakh, as depicted on the Survey of India convention,
+# fits inside the frame rather than being clipped at the top.
+INDIA_BOUNDS = {"lat_min": 6.0, "lat_max": 37.6, "lon_min": 67.0, "lon_max": 98.0}
 
 _MONTHS = {
     "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,

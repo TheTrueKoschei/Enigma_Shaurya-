@@ -778,3 +778,62 @@ def test_circularity_of_an_empty_network_is_zero(facilities):
     assert stats["circularity_pct"] == 0.0
     assert stats["placed_t"] == 0.0
     assert stats["unplaced_t"] == stats["total_byproduct_t"]
+
+
+def test_boundary_follows_the_survey_of_india_convention():
+    """The external boundary must show India's claimed extent, not the ceasefire line.
+
+    A map of India that stops at the Line of Control is wrong for this audience and
+    unlawful to publish in India. Jammu and Kashmir must therefore include the areas
+    India claims but does not administer, and Ladakh must include Aksai Chin.
+    """
+    import json
+    with open("data/india_states.geojson", encoding="utf-8") as fh:
+        geo = json.load(fh)
+    by_state = {f["properties"]["state"]: f for f in geo["features"]}
+
+    assert "Jammu and Kashmir" in by_state
+    assert "Ladakh" in by_state
+
+    def extent(name):
+        points = [p for poly in by_state[name]["geometry"]["coordinates"]
+                  for ring in poly for p in ring]
+        return (min(p[0] for p in points), max(p[0] for p in points),
+                min(p[1] for p in points), max(p[1] for p in points))
+
+    jk_lon_min, _, _, jk_lat_max = extent("Jammu and Kashmir")
+    _, ladakh_lon_max, _, _ = extent("Ladakh")
+
+    # Gilgit-Baltistan carries the northern tip past 36.5 N; an LoC-clipped file
+    # stops near 35.5 N.
+    assert jk_lat_max > 36.5, f"northern extent only reaches {jk_lat_max}"
+    # Azad Kashmir carries the western edge past 74 E.
+    assert jk_lon_min < 74.0, f"western extent only reaches {jk_lon_min}"
+    # Aksai Chin carries Ladakh's eastern edge past 79 E.
+    assert ladakh_lon_max > 79.0, f"eastern extent only reaches {ladakh_lon_max}"
+
+
+def test_map_frame_contains_the_whole_boundary():
+    """INDIA_BOUNDS must not clip the corrected northern boundary."""
+    import json
+    with open("data/india_states.geojson", encoding="utf-8") as fh:
+        geo = json.load(fh)
+    points = [p for f in geo["features"] for poly in f["geometry"]["coordinates"]
+              for ring in poly for p in ring]
+    bounds = engine.INDIA_BOUNDS
+    assert max(p[1] for p in points) <= bounds["lat_max"]
+    assert min(p[1] for p in points) >= bounds["lat_min"]
+    assert max(p[0] for p in points) <= bounds["lon_max"]
+    assert min(p[0] for p in points) >= bounds["lon_min"]
+
+
+def test_interface_strings_cover_both_languages():
+    import i18n
+    assert set(i18n.LANGUAGES) == {"en", "hi"}
+    for key, entry in i18n.STRINGS.items():
+        assert "en" in entry, f"{key} has no English string"
+        assert "hi" in entry, f"{key} has no Hindi string"
+        assert entry["en"].strip() or key == "hindi_note"
+    # an unknown key falls back to itself rather than raising
+    assert i18n.t("no_such_key", "hi") == "no_such_key"
+    assert i18n.t("portal", "en") != i18n.t("portal", "hi")
