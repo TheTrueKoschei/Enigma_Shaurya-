@@ -430,114 +430,115 @@ with tab_matches:
                     unsafe_allow_html=True,
                 )
 
-            with st.expander("Audit this score and valuation", expanded=False):
-                st.markdown("**Score: five factors, weighted**")
-                audit = pd.DataFrame([
-                    {"factor": "Quantity", "raw": row["f_quantity"],
-                     "weight": engine.W_QUANTITY, "points": row["c_quantity"],
-                     "how it was computed":
-                         f"matched {row['matched_tpa']:,.0f} t / ceiling "
-                         f"{row['ceiling_tpa']:,.0f} t "
-                         f"(need {row['receiver_need_tpa']:,.0f} t x max share "
-                         f"{row['max_share']:.2f})"},
-                    {"factor": "Proximity", "raw": row["f_proximity"],
-                     "weight": engine.W_PROXIMITY, "points": row["c_proximity"],
-                     "how it was computed":
-                         f"max(0, 1 - ({row['road_km']:,.0f} km / {row['max_km']:,.0f} km) "
-                         f"^ {engine.PROXIMITY_EXPONENT})"},
-                    {"factor": "Timing", "raw": row["f_timing"],
-                     "weight": engine.W_TIMING, "points": row["c_timing"],
-                     "how it was computed":
-                         f"months both active / 12; supplier {row['supplier_availability']}, "
-                         f"receiver {row['receiver_availability']}"},
-                    {"factor": "Processing", "raw": row["f_processing"],
-                     "weight": engine.W_PROCESSING, "points": row["c_processing"],
-                     "how it was computed":
-                         f"'{row['processing']}' processing maps to "
-                         f"{engine.PROCESSING_FACTOR[row['processing']]:.2f}"},
-                    {"factor": "Compliance", "raw": row["f_compliance"],
-                     "weight": engine.W_COMPLIANCE, "points": row["c_compliance"],
-                     "how it was computed":
-                         f"hazard '{row['hazard']}', receiver authorised "
-                         f"{bool(row['receiver_authorised'])}"},
-                ])
-                st.dataframe(
-                    audit, hide_index=True, width="stretch",
-                    column_config={
-                        "factor": st.column_config.TextColumn("Factor", width="small"),
-                        "raw": st.column_config.ProgressColumn(
-                            "Raw value (0-1)", min_value=0, max_value=1, format="%.3f"),
-                        "weight": st.column_config.NumberColumn("Weight", format="%.2f",
-                                                                width="small"),
-                        "points": st.column_config.NumberColumn("Points", format="%.2f",
-                                                                width="small"),
-                        "how it was computed": st.column_config.TextColumn(
-                            "How it was computed", width="large"),
-                    },
-                )
-                st.markdown(
-                    f"Total: **{row['score']:.2f}** of 100 "
-                    f"(sum of points; weights sum to {sum(engine.WEIGHTS.values()):.2f})."
-                )
+        st.markdown("---")
+        with st.expander("Audit this score and valuation", expanded=False):
+            st.markdown("**Score: five factors, weighted**")
+            audit = pd.DataFrame([
+                {"factor": "Quantity", "raw": row["f_quantity"],
+                 "weight": engine.W_QUANTITY, "points": row["c_quantity"],
+                 "how it was computed":
+                     f"matched {row['matched_tpa']:,.0f} t / ceiling "
+                     f"{row['ceiling_tpa']:,.0f} t "
+                     f"(need {row['receiver_need_tpa']:,.0f} t x max share "
+                     f"{row['max_share']:.2f})"},
+                {"factor": "Proximity", "raw": row["f_proximity"],
+                 "weight": engine.W_PROXIMITY, "points": row["c_proximity"],
+                 "how it was computed":
+                     f"max(0, 1 - ({row['road_km']:,.0f} km / {row['max_km']:,.0f} km) "
+                     f"^ {engine.PROXIMITY_EXPONENT})"},
+                {"factor": "Timing", "raw": row["f_timing"],
+                 "weight": engine.W_TIMING, "points": row["c_timing"],
+                 "how it was computed":
+                     f"months both active / 12; supplier {row['supplier_availability']}, "
+                     f"receiver {row['receiver_availability']}"},
+                {"factor": "Processing", "raw": row["f_processing"],
+                 "weight": engine.W_PROCESSING, "points": row["c_processing"],
+                 "how it was computed":
+                     f"'{row['processing']}' processing maps to "
+                     f"{engine.PROCESSING_FACTOR[row['processing']]:.2f}"},
+                {"factor": "Compliance", "raw": row["f_compliance"],
+                 "weight": engine.W_COMPLIANCE, "points": row["c_compliance"],
+                 "how it was computed":
+                     f"hazard '{row['hazard']}', receiver authorised "
+                     f"{bool(row['receiver_authorised'])}"},
+            ])
+            st.dataframe(
+                audit, hide_index=True, width="stretch",
+                column_config={
+                    "factor": st.column_config.TextColumn("Factor", width="small"),
+                    "raw": st.column_config.ProgressColumn(
+                        "Raw value (0-1)", min_value=0, max_value=1, format="%.3f"),
+                    "weight": st.column_config.NumberColumn("Weight", format="%.2f",
+                                                            width="small"),
+                    "points": st.column_config.NumberColumn("Points", format="%.2f",
+                                                            width="small"),
+                    "how it was computed": st.column_config.TextColumn(
+                        "How it was computed", width="large"),
+                },
+            )
+            st.markdown(
+                f"Total: **{row['score']:.2f}** of 100 "
+                f"(sum of points; weights sum to {sum(engine.WEIGHTS.values()):.2f})."
+            )
 
-                st.markdown("**Valuation, line by line, per year**")
-                money = pd.DataFrame([
-                    {"line": "Virgin material displaced", "amount": row["material_value"],
-                     "how it was computed":
-                         f"{row['matched_tpa']:,.0f} t x ratio {row['substitution_ratio']:.2f} "
-                         f"x Rs {row['virgin_value']:,.0f}/t"},
-                    {"line": "Disposal avoided", "amount": row["disposal_saved"],
-                     "how it was computed":
-                         f"{row['matched_tpa']:,.0f} t x Rs {row['disposal_rate']:,.0f}/t"},
-                    {"line": "Transport", "amount": -row["transport_cost"],
-                     "how it was computed":
-                         f"{row['matched_tpa']:,.0f} t x {row['road_km']:,.0f} km x "
-                         f"Rs {row['freight_rate']:,.1f}/t-km ({row['transport_mode']})"},
-                    {"line": "Processing", "amount": -row["processing_cost"],
-                     "how it was computed":
-                         f"{row['matched_tpa']:,.0f} t x Rs {row['processing_rate']:,.0f}/t "
-                         f"('{row['processing']}')"},
-                    {"line": "Net", "amount": row["net_value"],
-                     "how it was computed": "sum of the four lines above"},
-                ])
-                st.dataframe(
-                    money, hide_index=True, width="stretch",
-                    column_config={
-                        "line": st.column_config.TextColumn("Line", width="medium"),
-                        "amount": st.column_config.NumberColumn("Rs/yr", format="%.0f"),
-                        "how it was computed": st.column_config.TextColumn(
-                            "How it was computed", width="large"),
-                    },
-                )
+            st.markdown("**Valuation, line by line, per year**")
+            money = pd.DataFrame([
+                {"line": "Virgin material displaced", "amount": row["material_value"],
+                 "how it was computed":
+                     f"{row['matched_tpa']:,.0f} t x ratio {row['substitution_ratio']:.2f} "
+                     f"x Rs {row['virgin_value']:,.0f}/t"},
+                {"line": "Disposal avoided", "amount": row["disposal_saved"],
+                 "how it was computed":
+                     f"{row['matched_tpa']:,.0f} t x Rs {row['disposal_rate']:,.0f}/t"},
+                {"line": "Transport", "amount": -row["transport_cost"],
+                 "how it was computed":
+                     f"{row['matched_tpa']:,.0f} t x {row['road_km']:,.0f} km x "
+                     f"Rs {row['freight_rate']:,.1f}/t-km ({row['transport_mode']})"},
+                {"line": "Processing", "amount": -row["processing_cost"],
+                 "how it was computed":
+                     f"{row['matched_tpa']:,.0f} t x Rs {row['processing_rate']:,.0f}/t "
+                     f"('{row['processing']}')"},
+                {"line": "Net", "amount": row["net_value"],
+                 "how it was computed": "sum of the four lines above"},
+            ])
+            st.dataframe(
+                money, hide_index=True, width="stretch",
+                column_config={
+                    "line": st.column_config.TextColumn("Line", width="medium"),
+                    "amount": st.column_config.NumberColumn("Rs/yr", format="%.0f"),
+                    "how it was computed": st.column_config.TextColumn(
+                        "How it was computed", width="large"),
+                },
+            )
 
-                st.markdown("**Tonnage and allocation**")
-                st.dataframe(
-                    pd.DataFrame([
-                        {"quantity": "Supplier output", "t/yr": row["supplier_output_tpa"]},
-                        {"quantity": "Receiver input need", "t/yr": row["receiver_need_tpa"]},
-                        {"quantity": f"Ceiling at max share {row['max_share']:.2f}",
-                         "t/yr": row["ceiling_tpa"]},
-                        {"quantity": "Matched in this pairing", "t/yr": row["matched_tpa"]},
-                        {"quantity": "Allocated once other matches are served",
-                         "t/yr": row["allocated_tpa"]},
-                    ]),
-                    hide_index=True, width="stretch",
-                    column_config={
-                        "quantity": st.column_config.TextColumn("Quantity", width="large"),
-                        "t/yr": st.column_config.NumberColumn("t/yr", format="%.0f"),
-                    },
-                )
-                st.markdown(
-                    f'<p class="caveat">This pairing places '
-                    f'{row["supplier_share"] * 100:.0f}% of the supplier\'s output of '
-                    f'{row["material"]}. The quantity factor measures how much of the '
-                    '<em>receiver\'s</em> ceiling is filled, so a very large supplier can '
-                    'score 1.00 while still placing a small fraction of its output - that '
-                    'is what this line exposes.</p>',
-                    unsafe_allow_html=True,
-                )
-                st.markdown(f'<p class="caveat">Knowledge base note: {row["note"]}</p>',
-                            unsafe_allow_html=True)
+            st.markdown("**Tonnage and allocation**")
+            st.dataframe(
+                pd.DataFrame([
+                    {"quantity": "Supplier output", "t/yr": row["supplier_output_tpa"]},
+                    {"quantity": "Receiver input need", "t/yr": row["receiver_need_tpa"]},
+                    {"quantity": f"Ceiling at max share {row['max_share']:.2f}",
+                     "t/yr": row["ceiling_tpa"]},
+                    {"quantity": "Matched in this pairing", "t/yr": row["matched_tpa"]},
+                    {"quantity": "Allocated once other matches are served",
+                     "t/yr": row["allocated_tpa"]},
+                ]),
+                hide_index=True, width="stretch",
+                column_config={
+                    "quantity": st.column_config.TextColumn("Quantity", width="large"),
+                    "t/yr": st.column_config.NumberColumn("t/yr", format="%.0f"),
+                },
+            )
+            st.markdown(
+                f'<p class="caveat">This pairing places '
+                f'{row["supplier_share"] * 100:.0f}% of the supplier\'s output of '
+                f'{row["material"]}. The quantity factor measures how much of the '
+                '<em>receiver\'s</em> ceiling is filled, so a very large supplier can '
+                'score 1.00 while still placing a small fraction of its output - that '
+                'is what this line exposes.</p>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(f'<p class="caveat">Knowledge base note: {row["note"]}</p>',
+                        unsafe_allow_html=True)
 
 # ======================================================================
 # 3. Gap analysis
