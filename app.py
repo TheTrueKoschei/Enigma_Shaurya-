@@ -216,23 +216,37 @@ def flag_column(frame: pd.DataFrame) -> pd.Series:
 
 
 def render_narrative(row):
+    """Verdict, chips, score breakdown and money - prose goes in the expander."""
     story = explain.explain(row)
     loss = float(row["net_value"]) < 0
+    score = float(row["score"])
+
     st.markdown(
-        f'<div class="note{" loss" if loss else ""}">{story["headline"]}</div>',
+        f'<div class="note{" loss" if loss else ""}">'
+        f'<strong>{row["supplier"]} &rarr; {row["receiver"]}</strong>: '
+        f'{engine.tonnes(row["matched_tpa"])} of {row["material"]} a year for '
+        f'{row["application"]}, scoring {score:.0f} and worth '
+        f'{engine.inr(row["net_value"])} a year.</div>',
         unsafe_allow_html=True,
     )
-    if bool(row["beyond_max_km"]):
-        st.warning(
-            f"This haul of {row['road_km']:,.0f} km is past the {row['max_km']:,.0f} km "
-            f"economic limit for {row['material']}. It is admitted by the distance gate "
-            "but scores zero on proximity.",
-            icon=None,
-        )
-    for title in explain.SECTION_ORDER:
-        st.markdown(f'<p class="sec-title">{title}</p>', unsafe_allow_html=True)
-        st.markdown(f'<p class="sec-body">{story["sections"][title]}</p>',
-                    unsafe_allow_html=True)
+    st.markdown(match_chips(row), unsafe_allow_html=True)
+
+    left, right = st.columns([1, 1], gap="medium")
+    with left:
+        st.plotly_chart(score_bar(row), width="stretch",
+                        config={"displaylogo": False})
+    with right:
+        st.plotly_chart(money_waterfall(row), width="stretch",
+                        config={"displaylogo": False})
+
+    with st.expander("Full assessment", expanded=False):
+        st.markdown(f'<div class="note{" loss" if loss else ""}">'
+                    f'{story["headline"]}</div>', unsafe_allow_html=True)
+        for title in explain.SECTION_ORDER:
+            st.markdown(f'<p class="sec-title">{title}</p>',
+                        unsafe_allow_html=True)
+            st.markdown(f'<p class="sec-body">{story["sections"][title]}</p>',
+                        unsafe_allow_html=True)
 
 
 def render_audit(row):
@@ -440,6 +454,122 @@ def composition_bar(props: dict) -> go.Figure:
         hoverlabel=HOVER_STYLE,
     )
     return fig
+
+
+# Five factor identities for the score breakdown. Validated adjacent-pair on the
+# light surface; every segment is also labelled and legended, which is what the
+# two low-contrast steps require. Deliberately avoids the status green and red,
+# which are reserved for pass and fail everywhere else.
+FACTOR_COLOURS = {
+    "quantity": "#2a78d6", "proximity": "#eb6834", "timing": "#4a3aa7",
+    "processing": "#eda100", "compliance": "#e87ba4",
+}
+FACTOR_LABELS = {
+    "quantity": "Quantity", "proximity": "Proximity", "timing": "Timing",
+    "processing": "Processing", "compliance": "Compliance",
+}
+
+
+def score_bar(row) -> go.Figure:
+    """One stacked bar: each factor sized by weight x its value, out of 100."""
+    fig = go.Figure()
+    for key in ("quantity", "proximity", "timing", "processing", "compliance"):
+        points = float(row[f"c_{key}"])
+        raw = float(row[f"f_{key}"])
+        weight = engine.WEIGHTS[key]
+        fig.add_trace(go.Bar(
+            x=[points], y=["score"], orientation="h",
+            name=FACTOR_LABELS[key],
+            marker=dict(color=FACTOR_COLOURS[key],
+                        line=dict(width=1, color="#ffffff")),
+            text=[f"{points:.0f}" if points >= 6 else ""],
+            textposition="inside", insidetextanchor="middle",
+            textfont=dict(size=11, color="#ffffff"),
+            hovertemplate=(f"<b>{FACTOR_LABELS[key]}</b><br>"
+                           f"raw {raw:.2f} x weight {weight:.2f}"
+                           f" = {points:.2f} points<extra></extra>"),
+        ))
+    # The points not earned, so the bar always reads out of 100.
+    lost = 100.0 - float(row["score"])
+    if lost > 0.01:
+        fig.add_trace(go.Bar(
+            x=[lost], y=["score"], orientation="h", name="not earned",
+            marker=dict(color="#e8ebef", line=dict(width=1, color="#ffffff")),
+            hovertemplate=f"Not earned: {lost:.1f} points<extra></extra>",
+        ))
+    fig.update_layout(
+        barmode="stack", height=150, margin=dict(l=0, r=0, t=6, b=40),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=CHART_FONT,
+        xaxis=dict(range=[0, 100], showgrid=False, zeroline=False,
+                   title="score out of 100"),
+        yaxis=dict(showticklabels=False, showgrid=False),
+        legend=dict(orientation="h", yanchor="top", y=-0.45, x=0,
+                    font=dict(size=10)),
+        hoverlabel=HOVER_STYLE,
+    )
+    return fig
+
+
+def money_waterfall(row) -> go.Figure:
+    """Material value, plus disposal avoided, less freight and processing."""
+    values = [float(row["material_value"]), float(row["disposal_saved"]),
+              -float(row["transport_cost"]), -float(row["processing_cost"])]
+    net = float(row["net_value"])
+    fig = go.Figure(go.Waterfall(
+        orientation="v",
+        measure=["relative", "relative", "relative", "relative", "total"],
+        x=["Material<br>displaced", "Disposal<br>avoided", "Transport",
+           "Processing", "Net"],
+        y=values + [net],
+        text=[engine.inr(v) for v in values] + [engine.inr(net)],
+        textposition="outside", textfont=dict(size=10),
+        connector=dict(line=dict(color="#b9c0cc", width=1)),
+        increasing=dict(marker=dict(color=ui.STATUS_GOOD)),
+        decreasing=dict(marker=dict(color=ui.STATUS_BAD)),
+        totals=dict(marker=dict(color=ui.ACCENT if net >= 0 else ui.STATUS_BAD)),
+        hoverinfo="x+y",
+    ))
+    # A loss has to be visible as a bar below the axis, not just a red number.
+    low = min(0.0, net, min(values)) * 1.25
+    high = max(values + [net]) * 1.3
+    fig.update_layout(
+        height=330, margin=dict(l=0, r=0, t=22, b=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#ffffff", font=CHART_FONT,
+        yaxis=dict(title="Rs per year", gridcolor="#e4e7ec", zeroline=True,
+                   zerolinecolor="#1a1f2b", zerolinewidth=1,
+                   range=[low, high]),
+        xaxis=dict(showgrid=False),
+        showlegend=False, hoverlabel=HOVER_STYLE,
+    )
+    return fig
+
+
+def match_chips(row) -> str:
+    """The operational facts of an exchange, as tags rather than a paragraph."""
+    processing = str(row["processing"])
+    chips = [
+        ui.chip(f'{row["road_km"]:,.0f} km by {row["transport_mode"]}', "accent"),
+        ui.chip(f'{engine.tonnes(row["matched_tpa"])}/yr'),
+        ui.chip(f'{row["supplier_share"] * 100:.0f}% of supplier output'),
+        ui.chip(f'{row["max_share"] * 100:.0f}% max of receiver input'),
+        ui.chip(f'{processing} processing',
+                "good" if processing == "none" else
+                ("warn" if processing in ("simple", "moderate") else "bad")),
+        ui.chip(f'{row["supplier_availability"]}',
+                "good" if float(row["f_timing"]) >= 0.999 else "warn"),
+    ]
+    if str(row["hazard"]) == "regulated":
+        chips.append(ui.chip(
+            "regulated" + (" - receiver authorised" if row["receiver_authorised"]
+                           else " - receiver NOT authorised"),
+            "warn" if row["receiver_authorised"] else "bad"))
+    if bool(row["beyond_max_km"]):
+        chips.append(ui.chip(f'past the {row["max_km"]:,.0f} km limit', "bad"))
+    if float(row["net_value"]) < 0:
+        chips.append(ui.chip("loses money", "bad"))
+    return ui.chip_row(chips)
+
 
 
 # ======================================================================
