@@ -4,19 +4,105 @@ Finds exchanges where one industrial plant's by-product can replace another's
 virgin raw material, scores how practical each one actually is, and prices it
 in tonnes diverted, CO₂ avoided and rupees per year.
 
-Built for ENIGMA 5.0, Sustainability track, PS 5 — *Discovering Hidden
-Industrial Symbiosis*.
-
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
-
-Python 3.12 (works on 3.11), no database, no API keys, no credentials.
+**ENIGMA 5.0 — Sustainability track — PS 5: *Discovering Hidden Industrial
+Symbiosis***
 
 ---
 
-## The problem
+## Team
+
+**Team name:** Shaurya
+
+| Name | Role |
+|---|---|
+| _(fill in)_ | _(fill in)_ |
+| _(fill in)_ | _(fill in)_ |
+| _(fill in)_ | _(fill in)_ |
+| _(fill in)_ | _(fill in)_ |
+
+---
+
+## Problem statement
+
+**PS 5 — Discovering Hidden Industrial Symbiosis.** Industries generate
+by-products they treat as waste, while other industries buy virgin raw
+materials those by-products could replace. The matches are hard to find
+because they depend on material properties, quantity, location, timing,
+transport, processing and environmental impact simultaneously.
+
+The three objectives this is judged on, and where each is answered:
+
+| Objective | Where it is answered |
+|---|---|
+| Improve identification of opportunities for better use of industrial resources | Exhaustive pairwise search over a 48-entry substitution knowledge base, plus multi-hop chains and property-based analogue discovery for streams the table has never heard of |
+| Consider practical, operational and environmental factors when assessing them | A five-factor score — quantity, proximity, timing, processing, compliance — with a rupee valuation net of freight and processing, rail-or-road mode selection, and a circularity and CO₂ rollup |
+| Demonstrate the approach works across different industrial contexts | 63 facilities across 20+ sectors and 17 states, any registry uploadable as CSV, and a "describe your own plant" tool that scores a user-supplied facility with the same engine |
+
+---
+
+## Tech stack
+
+| Layer | Choice | Licence |
+|---|---|---|
+| Language | Python 3.11 / 3.12 | PSF |
+| Interface | Streamlit | Apache-2.0 |
+| Data handling | pandas, NumPy | BSD-3-Clause |
+| Charting and maps | Plotly (graph_objects) | MIT |
+| Optimisation | SciPy (`linprog`, HiGHS) | BSD-3-Clause |
+| Tests | pytest | MIT |
+
+All open source. No paid templates, plugins, themes or assets. No database, no
+API keys, no credentials, and nothing is fetched from the internet at run time
+except an optional web font.
+
+---
+
+## Setup instructions
+
+```bash
+git clone https://github.com/TheTrueKoschei/Enigma_Shaurya-.git
+cd Enigma_Shaurya-
+
+python3 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+
+pip install -r requirements.txt
+streamlit run app.py             # opens http://localhost:8501
+```
+
+Verify the install:
+
+```bash
+python -m pytest test_engine.py -v      # 81 tests
+```
+
+Python 3.11 or 3.12. No database, no API keys, no credentials.
+
+---
+
+## AI assistance
+
+This project was built with **Claude (Anthropic)** used as a coding assistant,
+declared here as the hackathon rules require.
+
+- **What it did:** wrote code to our specification across the session — the
+  scoring engine, knowledge base, interface, optimisation and tests — and was
+  directed, reviewed and corrected by the team throughout.
+- **What it did not do:** no figure anywhere in this application is produced by
+  a language model. Every score, tonnage, rupee value and CO₂ number is computed
+  in Python from the knowledge base and the registry, and is deterministic — the
+  same registry always yields the same matches in the same order, which
+  `test_engine.py` asserts by shuffling the input rows. The explanation text in
+  `explain.py` receives finished numbers and only arranges them into sentences;
+  it performs no arithmetic and calls nothing.
+- **Provenance:** every commit carries a `Co-Authored-By` trailer, so the
+  history is an honest record of where the assistance applied.
+- All code in this repository was written during the hackathon. Nothing was
+  copied from another project, another hackathon, or a pre-existing codebase.
+
+---
+
+## Why this is hard
 
 Industries generate by-products they treat as waste while other industries
 buy virgin raw materials those by-products could replace. Fly ash goes to an
@@ -42,7 +128,19 @@ by-products that have nowhere to go.
    exchanges: tonnage mismatch, distance, seasonality, processing burden and
    regulatory friction.
 4. **A valuation** in rupees per year, net of freight and processing, shown
-   line by line.
+   line by line, with rail or road chosen on whichever is genuinely cheaper
+   door to door.
+5. **Three passes on top of the pairwise search**, none of which changes a score:
+   - **Analogue discovery** compares an unplaced stream's properties against
+     every material the knowledge base knows, so a residue nobody wrote a use for
+     still points somewhere. This is the "hidden" in hidden industrial symbiosis —
+     and it is plain weighted Euclidean distance over documented profiles, not a
+     model: deterministic, offline, and it names the properties driving each
+     suggestion so it can be argued with.
+   - **Multi-hop chains** find a plant that both receives a by-product and places
+     its own, which pair-at-a-time scoring cannot see.
+   - **Network optimisation** solves the whole allocation as a linear program to
+     maximise net value, instead of taking matches greedily by score.
 
 ### What makes it credible
 
@@ -108,15 +206,11 @@ bulky and cheap; spent refinery catalyst carries enough recoverable
 molybdenum and vanadium to ship 1200 km. A tool that ignores this will happily
 propose shipping bagasse across the country.
 
-## Running it
+## Using the app
 
-```bash
-pip install -r requirements.txt
-streamlit run app.py          # opens on http://localhost:8501
-python -m pytest test_engine.py -v
-```
+Setup is above. Once it is running, the six tabs are:
 
-### The five tabs
+### The six tabs
 
 1. **Find my matches** — describe your own plant from dropdowns (by-product or
    sector, nearest industrial centre, tonnage, operating season, hazardous-waste
@@ -131,11 +225,15 @@ python -m pytest test_engine.py -v
    tonnes supplied, tonnes received, facilities); flows are drawn between plants
    with thickness and opacity by score, dotted red where they lose money. Pan,
    zoom, hover any state for its totals, and filter by state, material or count.
-3. **Ranked matches** — the full table with a score bar and CSV download, a
-   detail panel with the plain-language case, and the full-width audit.
-4. **Gap analysis** — by-products with no viable receiver, ranked by tonnage with
-   the disposal cost carried, why nothing fits, and every recorded use.
-5. **Method** — the weights, the gates, the valuation, every assumption, the
+3. **Ranked matches** — the full table with a score bar, transport mode and CSV
+   download, a detail panel with the plain-language case, and the full-width audit.
+4. **Chains & impact** — the circularity, landfill-diversion, virgin-material and
+   CO₂ rollup on either the greedy or the optimised plan; the optimiser measured
+   against greedy; and the multi-hop chains, walkable step by step.
+5. **Gap analysis** — by-products with no viable receiver, ranked by tonnage with
+   the disposal cost carried, why nothing fits, what each stream chemically
+   resembles, and every recorded use.
+6. **Method** — the weights, the gates, the valuation, every assumption, the
    known limits, and the whole knowledge base as a browsable table.
 
 The sidebar switches between the sample registry and your own CSV, offers a
@@ -190,11 +288,33 @@ engine.py                   matching, scoring, valuation, validation
 kb.py                       substitution knowledge base (48 entries)
 explain.py                  computed numbers into plain language
 sample_facilities.csv       sample registry (63 facilities)
-data/india_states.geojson   simplified state boundaries for the map (139 KB)
-test_engine.py              62 tests, one per acceptance criterion plus invariants
+data/india_states.geojson   simplified state boundaries for the map (76 KB)
+test_engine.py              81 tests, one per acceptance criterion plus invariants
 requirements.txt
 .streamlit/config.toml      dark theme
 ```
+
+## Data sources, assets and licences
+
+| Asset | Source | Licence |
+|---|---|---|
+| State boundaries (`data/india_states.geojson`) | [Natural Earth](https://www.naturalearthdata.com/) admin-1 states and provinces, 1:50m, filtered to India and simplified | **Public domain** — free for any use, no permission or attribution required |
+| Typefaces | Inter and Space Grotesk via Google Fonts | SIL Open Font License 1.1 |
+| Icons and images | none used | — |
+
+The boundary file was reduced from 4,645 coordinate points to 4,154 (~1 km of
+detail, 76 KB) so the browser draws it instantly, and each state carries only
+its name. It is bundled with the app, so the map needs no internet.
+
+No icon packs, stock images, paid templates or purchased UI kits are used
+anywhere. The interface is hand-written CSS.
+
+Substitution ratios, share limits, haulage limits and prices in `kb.py` are
+assembled from Indian standards (IS 1489, IS 3812, IS 455, IS 383), CPCB
+co-processing guidance and published plant practice, and are cited per entry in
+the `note` field. They are representative screening figures, not quotations.
+
+---
 
 ## Limits
 
@@ -254,7 +374,7 @@ Read this before quoting any number from it.
 python -m pytest test_engine.py -v
 ```
 
-62 tests covering: the knowledge base is well formed and anchored to the
+81 tests covering: the knowledge base is well formed and anchored to the
 standards it cites; matched tonnage never exceeds supplier output or the
 receiver's ceiling; no self-matches; no match beyond `max_km × 1.5`; scores are
 spread rather than clustered and equal the sum of their weighted contributions;

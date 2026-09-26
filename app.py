@@ -138,7 +138,7 @@ html, body, [class*="css"], .stApp { font-family: var(--sans); }
 .hero p { color: var(--muted); font-size: .95rem; max-width: 74ch; margin:0; line-height:1.6; }
 
 /* ---------- KPI tiles ---------- */
-.kpis { display:grid; grid-template-columns: repeat(5, 1fr); gap: .8rem; margin: .5rem 0 .7rem; }
+.kpis { display:grid; grid-template-columns: repeat(6, 1fr); gap: .7rem; margin: .5rem 0 .7rem; }
 @media (max-width: 1200px){ .kpis { grid-template-columns: repeat(2, 1fr); } }
 .kpi { position:relative; overflow:hidden; background: linear-gradient(160deg, var(--surface) 0%, rgba(19,24,36,.55) 100%);
   border:1px solid var(--line); border-radius: 14px; padding: .95rem 1.05rem 1rem;
@@ -146,7 +146,7 @@ html, body, [class*="css"], .stApp { font-family: var(--sans); }
   transition: transform .22s cubic-bezier(.22,.9,.3,1), border-color .22s, box-shadow .22s; }
 .kpi:nth-child(1){animation-delay:.03s}.kpi:nth-child(2){animation-delay:.09s}
 .kpi:nth-child(3){animation-delay:.15s}.kpi:nth-child(4){animation-delay:.21s}
-.kpi:nth-child(5){animation-delay:.27s}
+.kpi:nth-child(5){animation-delay:.27s}.kpi:nth-child(6){animation-delay:.33s}
 .kpi:hover { transform: translateY(-3px); border-color: var(--line-2);
   box-shadow: 0 12px 30px -16px rgba(0,0,0,.85); }
 .kpi::after { content:""; position:absolute; inset:0 0 auto 0; height:2px;
@@ -154,7 +154,7 @@ html, body, [class*="css"], .stApp { font-family: var(--sans); }
   opacity:.5; background-size: 420px 100%; animation: sweep 5.5s linear infinite; }
 .kpi .lab { font-size:.67rem; letter-spacing:.13em; text-transform:uppercase;
   color: var(--muted); font-weight:600; margin-bottom:.42rem; }
-.kpi .val { font-family: var(--display); font-size:1.62rem; font-weight:650;
+.kpi .val { font-family: var(--display); font-size:1.46rem; font-weight:650;
   letter-spacing:-.025em; line-height:1.1; color: var(--text); }
 .kpi .sub { font-size:.72rem; color: var(--muted); margin-top:.32rem; }
 .kpi .sub.bad { color: var(--red); }
@@ -271,6 +271,15 @@ def run_engine(csv_text: str, min_score: float):
     gaps = engine.unmatched_outputs(clean, matches)
     summary = engine.network_summary(matches)
     return clean, problems, matches, gaps, summary
+
+
+@st.cache_data(show_spinner=False)
+def run_extras(csv_text: str, min_score: float):
+    """The optimisation pass and the chain search, cached alongside the matches."""
+    _, _, matches, _, _ = run_engine(csv_text, min_score)
+    optimised, report = engine.optimise_network(matches)
+    chains = engine.find_chains(matches)
+    return optimised, report, chains
 
 
 @st.cache_data(show_spinner=False)
@@ -490,7 +499,10 @@ def render_audit(row):
         {"line": "Transport", "amount": -row["transport_cost"],
          "how it was computed":
              f"{row['matched_tpa']:,.0f} t x {row['road_km']:,.0f} km x "
-             f"Rs {row['freight_rate']:,.1f}/t-km ({row['transport_mode']})"},
+             f"Rs {row['freight_rate']:,.1f}/t-km ({row['transport_mode']})"
+             + (f" + {row['matched_tpa']:,.0f} t x Rs {row['terminal_rate']:,.0f}/t "
+                "terminal handling and road legs"
+                if float(row["terminal_rate"]) > 0 else "")},
         {"line": "Processing", "amount": -row["processing_cost"],
          "how it was computed":
              f"{row['matched_tpa']:,.0f} t x Rs {row['processing_rate']:,.0f}/t "
@@ -593,6 +605,8 @@ if facilities.empty:
     st.error("No usable facilities in this registry. Check the columns against the template.")
     st.stop()
 
+optimised, opt_report, chains = run_extras(csv_text, float(min_score))
+impact = engine.circularity(matches, facilities)
 unmatched_tonnes = float(gaps["output_tpa"].sum()) if len(gaps) else 0.0
 st.markdown(
     '<div class="kpis">'
@@ -604,6 +618,8 @@ st.markdown(
                f"{summary['loss_making']} run at a loss", bad=summary["loss_making"] > 0)
     + kpi_tile("Still unmatched", engine.tonnes(unmatched_tonnes),
                f"{len(gaps)} streams with nowhere to go")
+    + kpi_tile("Circularity", f"{impact['circularity_pct']:.1f}%",
+               f"of {engine.tonnes(impact['total_byproduct_t'])} produced")
     + "</div>",
     unsafe_allow_html=True,
 )
@@ -615,8 +631,10 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-tab_mine, tab_network, tab_matches, tab_gaps, tab_method = st.tabs(
-    ["Find my matches", "Exchange network", "Ranked matches", "Gap analysis", "Method"]
+(tab_mine, tab_network, tab_matches, tab_chains,
+ tab_gaps, tab_method) = st.tabs(
+    ["Find my matches", "Exchange network", "Ranked matches", "Chains & impact",
+     "Gap analysis", "Method"]
 )
 
 # ======================================================================
@@ -1002,7 +1020,8 @@ with tab_matches:
         with left:
             st.markdown('<div class="sect">Ranked exchanges</div>', unsafe_allow_html=True)
             table = matches[["rank", "score", "supplier", "material", "receiver",
-                             "matched_tpa", "road_km", "net_value"]].copy()
+                             "matched_tpa", "road_km", "transport_mode",
+                             "net_value"]].copy()
             table["at a loss"] = matches["net_value"] < 0
             st.dataframe(
                 table, hide_index=True, height=560, width="stretch",
@@ -1016,6 +1035,7 @@ with tab_matches:
                     "receiver": st.column_config.TextColumn("Receiver"),
                     "matched_tpa": st.column_config.NumberColumn("t/yr", format="%.0f"),
                     "road_km": st.column_config.NumberColumn("km", format="%.0f"),
+                    "transport_mode": st.column_config.TextColumn("Mode", width="small"),
                     "net_value": st.column_config.NumberColumn("Net Rs/yr", format="%.0f"),
                     "at a loss": st.column_config.CheckboxColumn("Loss", width="small"),
                 },
@@ -1044,7 +1064,133 @@ with tab_matches:
             render_audit(row)
 
 # ======================================================================
-# 4. Gap analysis
+# 4. Chains and impact
+# ======================================================================
+
+with tab_chains:
+    st.markdown('<div class="sect">What the network is worth, and how to run it</div>',
+                unsafe_allow_html=True)
+    st.markdown(
+        '<p class="sub">Pairwise scoring says which exchanges are practical. It does not '
+        'say how to run them all together, and it cannot see an arrangement that only '
+        'makes sense through a third plant. These two passes do.</p>',
+        unsafe_allow_html=True,
+    )
+
+    basis = st.radio(
+        "Allocation basis",
+        ["Optimised (linear programming)", "Greedy (best score first)"],
+        horizontal=True, key="impact_basis",
+        help="Greedy walks the matches best score first and gives each whatever is left. "
+             "The optimiser solves the whole allocation at once to maximise net value, "
+             "subject to the same supply, intake and ceiling limits.",
+    )
+    use_optimised = basis.startswith("Optimised")
+    column = "optimised_tpa" if use_optimised else "allocated_tpa"
+    frame = optimised if use_optimised else matches
+    stats = engine.circularity(frame, facilities, tonnes_column=column)
+
+    st.markdown(
+        '<div class="kpis" style="grid-template-columns:repeat(5,1fr)">'
+        + kpi_tile("Circularity", f"{stats['circularity_pct']:.1f}%",
+                   f"of {engine.tonnes(stats['total_byproduct_t'])} of by-product produced")
+        + kpi_tile("Landfill diverted", engine.tonnes(stats["landfill_diverted_t"]),
+                   "kept out of disposal per year")
+        + kpi_tile("Virgin material avoided", engine.tonnes(stats["virgin_avoided_t"]),
+                   "not quarried, mined or grown")
+        + kpi_tile("CO2 avoided", engine.tonnes(stats["co2_avoided_t"]), "per year")
+        + kpi_tile("Net value", engine.inr(stats["net_value"]), "per year, both parties")
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<p class="caveat">Circularity is the share of by-product tonnage in this registry '
+        'that actually finds a home. The denominator is every tonne offered, including the '
+        'streams with no viable receiver, so it is deliberately hard to move. Virgin '
+        'material avoided applies each substitution ratio to the tonnage placed - it is the '
+        'quarrying, mining and growing that does not have to happen.</p>',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="sect">Optimiser against greedy</div>', unsafe_allow_html=True)
+    greedy_value = float(matches["allocated_net_value"].sum()) if len(matches) else 0.0
+    o1, o2, o3 = st.columns(3)
+    o1.metric("Greedy allocation", engine.inr(greedy_value) + " / yr")
+    o2.metric("Optimised allocation", engine.inr(opt_report["objective"]) + " / yr",
+              delta=engine.inr(opt_report["improvement"]) + " better")
+    o3.metric("Exchanges left at zero", f"{opt_report['dropped']:,}",
+              help="The optimiser is free to use none of an exchange. Anything that loses "
+                   "money is dropped on its own, without a rule telling it to.")
+    st.markdown(
+        f'<p class="caveat">Solver: {opt_report["solver"]}. {opt_report["status"]} '
+        'The objective is total net value per year subject to every supplier\'s output, '
+        'every receiver\'s intake, and each receiver\'s ceiling for a given material. '
+        'Both plans are feasible; neither is a plan anyone has agreed to.</p>',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("---")
+    st.markdown(f'<div class="sect">Multi-hop chains &mdash; {len(chains)} found</div>',
+                unsafe_allow_html=True)
+    st.markdown(
+        '<p class="sub">A chain is one plant receiving a by-product and placing its own, '
+        'so the exchanges only make sense read together. A pair-at-a-time search cannot see '
+        'them, and they are what an industrial park is actually built around. Each hop must '
+        'move a different material - otherwise it is a stream being passed along, not a '
+        'plant transforming it - and no facility appears twice. Ranked by the weakest link, '
+        'because a chain is only as real as its worst exchange.</p>',
+        unsafe_allow_html=True,
+    )
+
+    if chains.empty:
+        st.info(
+            "No chains at this threshold. Chains need a plant that both receives a "
+            "by-product and supplies one of its own; lower the minimum score in the sidebar "
+            "to admit weaker links."
+        )
+    else:
+        st.dataframe(
+            chains[["hops", "weakest_score", "mean_score", "path", "materials",
+                    "total_net_value", "total_co2_t"]],
+            hide_index=True, width="stretch", height=330,
+            column_config={
+                "hops": st.column_config.NumberColumn("Hops", width="small"),
+                "weakest_score": st.column_config.ProgressColumn(
+                    "Weakest link", min_value=0, max_value=100, format="%.1f"),
+                "mean_score": st.column_config.NumberColumn("Mean score", format="%.1f",
+                                                            width="small"),
+                "path": st.column_config.TextColumn("Chain", width="large"),
+                "materials": st.column_config.TextColumn("Materials", width="medium"),
+                "total_net_value": st.column_config.NumberColumn("Net Rs/yr", format="%.0f"),
+                "total_co2_t": st.column_config.NumberColumn("CO2 t/yr", format="%.0f"),
+            },
+        )
+
+        chain_labels = [f"{i + 1}. {r.path}" for i, r in enumerate(chains.itertuples(index=False))]
+        picked_chain = st.selectbox("Walk a chain", chain_labels, index=0, key="chain_pick")
+        chain = chains.iloc[chain_labels.index(picked_chain)]
+
+        steps_html = []
+        for i, step in enumerate(str(chain["steps"]).split(" | ")):
+            steps_html.append(
+                f'<div class="mrow" style="animation-delay:{i * 0.06:.2f}s">'
+                f'<div class="num">{i + 1}</div>'
+                f'<div class="body"><div class="t1">{step}</div></div></div>'
+            )
+        st.markdown("".join(steps_html), unsafe_allow_html=True)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Weakest link", f"{chain['weakest_score']:.1f}")
+        c2.metric("Chain net value", engine.inr(chain["total_net_value"]) + " / yr")
+        c3.metric("Chain CO2 avoided", engine.tonnes(chain["total_co2_t"]) + " / yr")
+        st.markdown(
+            '<p class="caveat">Chain totals add the individual exchanges, which overstates '
+            'them if the hops compete for the same tonnage - read the optimised allocation '
+            'above for what the network can actually run at once.</p>',
+            unsafe_allow_html=True,
+        )
+
+# ======================================================================
+# 5. Gap analysis
 # ======================================================================
 
 with tab_gaps:
@@ -1120,6 +1266,54 @@ with tab_gaps:
         st.markdown(f'<div class="headline loss">{explain.explain_gap(gap)}</div>',
                     unsafe_allow_html=True)
 
+        # --- analogue discovery -------------------------------------------------
+        st.markdown('<div class="sect">What this stream resembles</div>',
+                    unsafe_allow_html=True)
+        st.markdown(
+            '<p class="sub">The substitution table can only match a stream it has heard '
+            'of. This compares the by-product\'s measured properties against every '
+            'material the knowledge base does know and reports the closest, with the '
+            'properties that drive the resemblance and the one that does not. It is a lead '
+            'to test, never a scored match - nothing here touches the score or the '
+            'valuation.</p>',
+            unsafe_allow_html=True,
+        )
+        similar = engine.analogues(gap["material"], top_n=5)
+        if similar.empty:
+            st.info(
+                f"No property profile is recorded for {gap['material']}, so there is "
+                "nothing to compare it against. Adding one to kb.MATERIAL_PROFILES is a "
+                "laboratory question, not a code change."
+            )
+        else:
+            st.dataframe(
+                similar, hide_index=True, width="stretch",
+                column_config={
+                    "material": st.column_config.TextColumn("Closest known material",
+                                                            width="medium"),
+                    "similarity": st.column_config.ProgressColumn(
+                        "Resemblance", min_value=0, max_value=1, format="%.3f"),
+                    "recorded_uses": st.column_config.NumberColumn("Known uses",
+                                                                   width="small"),
+                    "accepting_sectors": st.column_config.TextColumn(
+                        "Sectors that take the analogue", width="medium"),
+                    "shared_properties": st.column_config.TextColumn(
+                        "What lines up", width="medium"),
+                    "biggest_difference": st.column_config.TextColumn(
+                        "What does not", width="small"),
+                },
+            )
+            best = similar.iloc[0]
+            st.markdown(
+                f'<p class="caveat">Closest analogue: <strong>{best["material"]}</strong> at '
+                f'{best["similarity"]:.0%} resemblance, agreeing on {best["shared_properties"]}, '
+                f'differing most on {best["biggest_difference"]}. It is accepted by '
+                f'{best["accepting_sectors"]}. The next step is a laboratory analysis of the '
+                'real material against that sector\'s specification - resemblance on paper '
+                'is a reason to test, not a reason to sign.</p>',
+                unsafe_allow_html=True,
+            )
+
         uses = kb.uses_for(gap["material"])
         st.markdown('<div class="sect">Every recorded use for this stream</div>',
                     unsafe_allow_html=True)
@@ -1146,7 +1340,7 @@ with tab_gaps:
             )
 
 # ======================================================================
-# 5. Method
+# 6. Method
 # ======================================================================
 
 with tab_method:
@@ -1208,8 +1402,12 @@ with tab_method:
 - **Distance** is haversine great-circle distance multiplied by
   **{engine.ROAD_CIRCUITY_FACTOR:.2f}** for road circuity. No routing engine, no traffic, no
   terrain. A hill road or a river crossing will be worse than this says.
-- **Freight** is **Rs {engine.FREIGHT_RATE}/tonne-km**, bulk road, full truck loads. Part loads
-  and return-empty legs cost more. Rail is cheaper and is not modelled.
+- **Freight** is **Rs {engine.FREIGHT_RATE}/tonne-km** by bulk road, full truck loads; part
+  loads and return-empty legs cost more. **Rail** is offered at
+  **Rs {engine.RAIL_RATE}/tonne-km** plus **Rs {engine.RAIL_TERMINAL_COST}/tonne** of terminal
+  handling covering both road legs, and is taken only above
+  **{engine.RAIL_MIN_KM} km** and **{engine.RAIL_MIN_TONNES:,} t/yr** and only when it is
+  genuinely cheaper door to door. Each match reports which mode it assumes.
 - **Pipeline** transfer for waste heat and coke oven gas is priced separately at
   **Rs {engine.PIPELINE_RATE:.0f}/tonne-km** as an amortised figure.
 - **Disposal avoided** defaults to **Rs {engine.DISPOSAL_COST_DEFAULT}/tonne**, overridden per
@@ -1257,6 +1455,42 @@ with tab_method:
   across {len(kb.materials())} materials is a screening tool, not an encyclopaedia.
 - **No quality specification is checked.** Two facilities may both handle 'fly ash' and still
   be incompatible on fineness, loss on ignition or chloride.
+"""
+    )
+
+    st.markdown('<div class="sect">Beyond the substitution table</div>',
+                unsafe_allow_html=True)
+    st.markdown(
+        f"""
+Three passes run on top of the pairwise scoring. None of them changes a score.
+
+- **Analogue discovery.** The substitution table can only match a stream it already knows,
+  which makes the genuinely hidden exchanges invisible. Every material carries a profile of
+  {len(kb.PROFILE_KEYS)} indicative properties - silica, alumina, lime, iron oxide, sulphur,
+  recoverable metal, organic carbon, calorific value, moisture, bulk density, alkalinity -
+  and an unplaced stream is compared against all {len(kb.MATERIAL_PROFILES)} profiles by
+  weighted Euclidean distance. Deterministic, offline, no model and no embeddings: the same
+  stream always returns the same analogues, and each one names the properties that agree and
+  the one that does not, so it can be argued with. **These profiles are indicative typical
+  compositions, not an assay of anybody's actual waste, and they feed nothing but the
+  resemblance ranking.** A suggestion is a reason to send a sample to a laboratory.
+- **Multi-hop chains.** A depth-first walk over the match graph finds sequences where one
+  plant receives a by-product and places its own. Each hop must move a different material and
+  no facility may repeat, so a chain describes transformation rather than a stream being
+  passed along. Chains are ranked by their weakest link. Chain totals add the individual
+  exchanges and will overstate them where hops compete for the same tonnage.
+- **Network optimisation.** The greedy allocation takes matches best score first, which is
+  feasible but not optimal - score measures practicality, not value. The optimiser solves the
+  whole allocation as a linear program (SciPy HiGHS), maximising total net value subject to
+  every supplier's output, every receiver's intake and each receiver's per-material ceiling.
+  Loss-making exchanges fall to zero on their own rather than by a rule. If SciPy is missing
+  the app falls back to the greedy plan and says so.
+
+**Circularity** is the share of by-product tonnage in the registry that finds a home. The
+denominator is every tonne offered, the unplaced streams included, so it is deliberately hard
+to move. **Virgin material avoided** applies each substitution ratio to the tonnage placed.
+**Water footprint is not modelled** - there is no defensible per-tonne figure for most of
+these streams, and inventing one would undermine every number that is defensible.
 """
     )
 

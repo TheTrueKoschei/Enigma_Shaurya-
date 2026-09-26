@@ -865,3 +865,185 @@ def uses_for(material: str) -> list:
     """All recorded applications for a by-product, in knowledge base order."""
     key = str(material).strip().lower()
     return [e for e in SUBSTITUTIONS if e["material"].lower() == key]
+
+
+# ======================================================================
+# Material property profiles
+# ======================================================================
+#
+# What these are for
+# ------------------
+# The substitution table above only matches a stream the knowledge base has
+# heard of. The "hidden" exchanges are the ones nobody wrote down: a residue
+# with no recorded use that is chemically close to one that has several.
+#
+# These profiles let the engine answer "what does this stream resemble?"
+# deterministically, without a language model and without embeddings. Each
+# material carries a vector of indicative properties; engine.analogues()
+# compares them and reports which properties drive the resemblance, so a
+# suggestion can always be argued with rather than taken on faith.
+#
+# Honesty about the numbers
+# -------------------------
+# These are INDICATIVE TYPICAL compositions for screening only - the middle of
+# a published range for a stream of that type, not an assay of anybody's
+# actual waste. A real pairing needs a laboratory analysis of the real
+# material. Nothing here feeds the score or the valuation: profiles are used
+# only to rank resemblance and to suggest what to test next.
+#
+# Units: mass fractions 0-1, except
+#   calorific  - lower heating value / 35 MJ/kg  (so 1.0 is about fuel oil)
+#   density    - bulk density / 2.5 t/m3
+#   alkalinity - (pH - 4) / 10, so 0.5 is pH 9 and 0.95 is pH 13.5
+PROFILE_KEYS = (
+    "sio2", "al2o3", "cao", "fe2o3", "sulphur", "metal",
+    "carbon", "calorific", "moisture", "density", "alkalinity",
+)
+
+# How much each property counts when ranking resemblance. Composition and
+# combustibility decide whether a substitution is even conceivable; moisture
+# and density decide whether it can be handled, and matter less.
+PROFILE_WEIGHTS = {
+    "sio2": 1.2, "al2o3": 1.0, "cao": 1.2, "fe2o3": 1.0, "sulphur": 1.0,
+    "metal": 1.3, "carbon": 1.2, "calorific": 1.3, "moisture": 0.7,
+    "density": 0.5, "alkalinity": 0.8,
+}
+
+MATERIAL_PROFILES = {
+    # --- coal ash and desulphurisation residues ---
+    "fly ash":            dict(sio2=.58, al2o3=.26, cao=.04, fe2o3=.06, sulphur=.01,
+                               metal=.00, carbon=.02, calorific=.03, moisture=.01,
+                               density=.42, alkalinity=.50),
+    "bottom ash":         dict(sio2=.55, al2o3=.24, cao=.05, fe2o3=.07, sulphur=.01,
+                               metal=.00, carbon=.05, calorific=.05, moisture=.15,
+                               density=.48, alkalinity=.50),
+    "FGD gypsum":         dict(sio2=.02, al2o3=.01, cao=.32, fe2o3=.01, sulphur=.19,
+                               metal=.00, carbon=.00, calorific=.00, moisture=.10,
+                               density=.45, alkalinity=.45),
+    # --- iron and steel ---
+    "blast furnace slag": dict(sio2=.34, al2o3=.16, cao=.40, fe2o3=.01, sulphur=.01,
+                               metal=.00, carbon=.00, calorific=.00, moisture=.05,
+                               density=.48, alkalinity=.60),
+    "steel slag":         dict(sio2=.14, al2o3=.03, cao=.42, fe2o3=.25, sulphur=.01,
+                               metal=.05, carbon=.00, calorific=.00, moisture=.04,
+                               density=.56, alkalinity=.70),
+    "mill scale":         dict(sio2=.01, al2o3=.00, cao=.01, fe2o3=.95, sulphur=.00,
+                               metal=.70, carbon=.01, calorific=.01, moisture=.03,
+                               density=.80, alkalinity=.50),
+    "ferrous scrap":      dict(sio2=.01, al2o3=.00, cao=.00, fe2o3=.05, sulphur=.00,
+                               metal=.95, carbon=.01, calorific=.00, moisture=.01,
+                               density=1.00, alkalinity=.50),
+    # --- energy streams ---
+    "coke oven gas":      dict(sio2=.00, al2o3=.00, cao=.00, fe2o3=.00, sulphur=.01,
+                               metal=.00, carbon=.35, calorific=1.00, moisture=.02,
+                               density=.00, alkalinity=.50),
+    "waste heat":         dict(sio2=.00, al2o3=.00, cao=.00, fe2o3=.00, sulphur=.00,
+                               metal=.00, carbon=.00, calorific=1.00, moisture=.00,
+                               density=.00, alkalinity=.50),
+    # --- sugar, distillery and agricultural residue ---
+    "bagasse":            dict(sio2=.02, al2o3=.00, cao=.01, fe2o3=.00, sulphur=.00,
+                               metal=.00, carbon=.45, calorific=.26, moisture=.50,
+                               density=.06, alkalinity=.50),
+    "press mud":          dict(sio2=.05, al2o3=.01, cao=.08, fe2o3=.02, sulphur=.01,
+                               metal=.00, carbon=.35, calorific=.17, moisture=.65,
+                               density=.30, alkalinity=.50),
+    "molasses":           dict(sio2=.00, al2o3=.00, cao=.01, fe2o3=.00, sulphur=.01,
+                               metal=.00, carbon=.40, calorific=.31, moisture=.20,
+                               density=.58, alkalinity=.50),
+    "spent wash":         dict(sio2=.01, al2o3=.00, cao=.01, fe2o3=.00, sulphur=.02,
+                               metal=.00, carbon=.06, calorific=.03, moisture=.92,
+                               density=.40, alkalinity=.35),
+    "rice husk":          dict(sio2=.18, al2o3=.00, cao=.01, fe2o3=.00, sulphur=.00,
+                               metal=.00, carbon=.40, calorific=.37, moisture=.10,
+                               density=.05, alkalinity=.50),
+    "rice husk ash":      dict(sio2=.90, al2o3=.01, cao=.01, fe2o3=.01, sulphur=.00,
+                               metal=.00, carbon=.05, calorific=.05, moisture=.02,
+                               density=.18, alkalinity=.55),
+    "sawdust":            dict(sio2=.01, al2o3=.00, cao=.01, fe2o3=.00, sulphur=.00,
+                               metal=.00, carbon=.48, calorific=.43, moisture=.15,
+                               density=.08, alkalinity=.50),
+    "cotton waste":       dict(sio2=.01, al2o3=.00, cao=.01, fe2o3=.00, sulphur=.00,
+                               metal=.00, carbon=.45, calorific=.49, moisture=.08,
+                               density=.06, alkalinity=.50),
+    # --- pulp, paper and lime ---
+    "lime sludge":        dict(sio2=.03, al2o3=.01, cao=.48, fe2o3=.01, sulphur=.00,
+                               metal=.00, carbon=.02, calorific=.01, moisture=.35,
+                               density=.40, alkalinity=.75),
+    "paper sludge":       dict(sio2=.10, al2o3=.08, cao=.20, fe2o3=.01, sulphur=.00,
+                               metal=.00, carbon=.25, calorific=.17, moisture=.55,
+                               density=.32, alkalinity=.55),
+    # --- textile and food ---
+    "textile ETP sludge": dict(sio2=.12, al2o3=.06, cao=.10, fe2o3=.05, sulphur=.03,
+                               metal=.02, carbon=.15, calorific=.09, moisture=.60,
+                               density=.36, alkalinity=.60),
+    "spent grain":        dict(sio2=.01, al2o3=.00, cao=.01, fe2o3=.00, sulphur=.00,
+                               metal=.00, carbon=.45, calorific=.20, moisture=.75,
+                               density=.35, alkalinity=.50),
+    "whey":               dict(sio2=.00, al2o3=.00, cao=.01, fe2o3=.00, sulphur=.00,
+                               metal=.00, carbon=.05, calorific=.03, moisture=.94,
+                               density=.41, alkalinity=.45),
+    "used cooking oil":   dict(sio2=.00, al2o3=.00, cao=.00, fe2o3=.00, sulphur=.00,
+                               metal=.00, carbon=.77, calorific=1.00, moisture=.01,
+                               density=.37, alkalinity=.50),
+    "process CO2":        dict(sio2=.00, al2o3=.00, cao=.00, fe2o3=.00, sulphur=.00,
+                               metal=.00, carbon=.27, calorific=.00, moisture=.01,
+                               density=.00, alkalinity=.45),
+    # --- non-ferrous and refinery ---
+    "red mud":            dict(sio2=.12, al2o3=.17, cao=.05, fe2o3=.45, sulphur=.01,
+                               metal=.01, carbon=.00, calorific=.00, moisture=.30,
+                               density=.50, alkalinity=.95),
+    "spent pot lining":   dict(sio2=.05, al2o3=.15, cao=.02, fe2o3=.02, sulphur=.01,
+                               metal=.02, carbon=.45, calorific=.49, moisture=.02,
+                               density=.40, alkalinity=.80),
+    "recovered sulphur":  dict(sio2=.00, al2o3=.00, cao=.00, fe2o3=.00, sulphur=1.00,
+                               metal=.00, carbon=.00, calorific=.26, moisture=.01,
+                               density=.80, alkalinity=.40),
+    "spent catalyst":     dict(sio2=.05, al2o3=.45, cao=.01, fe2o3=.02, sulphur=.08,
+                               metal=.25, carbon=.10, calorific=.10, moisture=.05,
+                               density=.40, alkalinity=.50),
+    # --- municipal and mixed ---
+    "RDF":                dict(sio2=.05, al2o3=.02, cao=.03, fe2o3=.01, sulphur=.00,
+                               metal=.01, carbon=.45, calorific=.49, moisture=.20,
+                               density=.12, alkalinity=.50),
+    "waste tyres":        dict(sio2=.02, al2o3=.00, cao=.01, fe2o3=.02, sulphur=.02,
+                               metal=.12, carbon=.70, calorific=.89, moisture=.01,
+                               density=.20, alkalinity=.50),
+    "glass cullet":       dict(sio2=.72, al2o3=.02, cao=.10, fe2o3=.00, sulphur=.00,
+                               metal=.00, carbon=.00, calorific=.00, moisture=.00,
+                               density=1.00, alkalinity=.60),
+    "C&D waste":          dict(sio2=.45, al2o3=.10, cao=.18, fe2o3=.03, sulphur=.01,
+                               metal=.01, carbon=.02, calorific=.02, moisture=.05,
+                               density=.64, alkalinity=.60),
+
+    # --- streams with NO recorded substitution above ---
+    # Profiles are given so the engine can still say what they resemble. These
+    # are exactly the cases the gap analysis is for.
+    "cement kiln dust":   dict(sio2=.14, al2o3=.04, cao=.45, fe2o3=.02, sulphur=.03,
+                               metal=.00, carbon=.01, calorific=.00, moisture=.02,
+                               density=.40, alkalinity=.90),
+    "jarosite":           dict(sio2=.05, al2o3=.02, cao=.02, fe2o3=.30, sulphur=.12,
+                               metal=.05, carbon=.00, calorific=.00, moisture=.30,
+                               density=.50, alkalinity=.25),
+    "chrome tanning sludge": dict(sio2=.05, al2o3=.02, cao=.12, fe2o3=.02, sulphur=.02,
+                               metal=.04, carbon=.20, calorific=.10, moisture=.65,
+                               density=.38, alkalinity=.60),
+}
+
+# A one-line plain description of what dominates each property, used to explain
+# why two materials resemble each other.
+PROFILE_LABELS = {
+    "sio2": "silica content", "al2o3": "alumina content", "cao": "lime content",
+    "fe2o3": "iron oxide content", "sulphur": "sulphur content",
+    "metal": "recoverable metal content", "carbon": "organic carbon content",
+    "calorific": "calorific value", "moisture": "moisture", "density": "bulk density",
+    "alkalinity": "alkalinity",
+}
+
+
+def profile_for(material: str) -> dict | None:
+    """The indicative property profile for a material, or None if unrecorded."""
+    key = str(material).strip().lower()
+    for name, profile in MATERIAL_PROFILES.items():
+        if name.lower() == key:
+            return profile
+    return None

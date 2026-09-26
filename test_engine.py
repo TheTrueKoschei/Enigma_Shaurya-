@@ -242,7 +242,10 @@ def test_net_value_is_the_sum_of_its_components(matches):
 
 
 def test_money_components_use_the_stated_constants(matches):
-    transport = matches["matched_tpa"] * matches["road_km"] * matches["freight_rate"]
+    # Rail adds a per-tonne terminal charge on top of the distance rate; road and
+    # pipeline carry none, so this covers all three modes.
+    transport = (matches["matched_tpa"] * matches["road_km"] * matches["freight_rate"]
+                 + matches["matched_tpa"] * matches["terminal_rate"])
     assert (matches["transport_cost"] - transport).abs().max() < 1e-6
     material = (matches["matched_tpa"] * matches["substitution_ratio"]
                 * matches["virgin_value"])
@@ -582,3 +585,196 @@ def test_bundled_state_boundaries_are_usable(facilities):
     # every state in the sample registry must be paintable on the map
     missing = {str(s) for s in facilities["state"].unique()} - named
     assert not missing, f"no boundary for {missing}"
+
+
+# ----------------------------------------------------------------------
+# Transport mode: rail against road
+# ----------------------------------------------------------------------
+
+def test_rail_is_only_chosen_when_it_is_actually_cheaper():
+    entry = {"processing": "none"}
+    # short haul, large tonnage -> road
+    mode, _, _ = engine.choose_transport(entry, 500_000, 120)
+    assert mode == "road"
+    # long haul, small tonnage -> road, no rake available
+    mode, _, _ = engine.choose_transport(entry, 500, 900)
+    assert mode == "road"
+    # long haul, large tonnage -> rail, and it must genuinely undercut road
+    mode, rate, terminal = engine.choose_transport(entry, 500_000, 900)
+    assert mode == "rail"
+    assert 900 * rate + terminal < 900 * engine.FREIGHT_RATE
+    # pipeline streams have no choice
+    mode, rate, terminal = engine.choose_transport(
+        {"processing": "none", "transport_mode": "pipeline"}, 500_000, 900)
+    assert mode == "pipeline" and rate == engine.PIPELINE_RATE and terminal == 0.0
+
+
+def test_transport_cost_includes_terminal_handling(matches):
+    expected = (matches["matched_tpa"] * matches["road_km"] * matches["freight_rate"]
+                + matches["matched_tpa"] * matches["terminal_rate"])
+    assert (matches["transport_cost"] - expected).abs().max() < 1e-6
+
+
+def test_rail_never_costs_more_than_road_would_have(matches):
+    rail = matches[matches["transport_mode"] == "rail"]
+    assert len(rail) >= 1, "the sample registry should exercise the rail path"
+    road_equivalent = rail["matched_tpa"] * rail["road_km"] * engine.FREIGHT_RATE
+    assert (rail["transport_cost"] < road_equivalent).all()
+    assert (rail["road_km"] >= engine.RAIL_MIN_KM).all()
+    assert (rail["matched_tpa"] >= engine.RAIL_MIN_TONNES).all()
+
+
+# ----------------------------------------------------------------------
+# Analogue discovery
+# ----------------------------------------------------------------------
+
+def test_every_knowledge_base_material_has_a_property_profile():
+    for material in kb.materials():
+        profile = kb.profile_for(material)
+        assert profile is not None, f"{material} has no profile"
+        assert set(profile) == set(kb.PROFILE_KEYS)
+        for key, value in profile.items():
+            assert 0.0 <= value <= 1.0, f"{material}.{key} = {value} is out of range"
+
+
+def test_profile_similarity_is_symmetric_and_bounded():
+    assert engine.profile_similarity("fly ash", "fly ash") == pytest.approx(1.0)
+    ab = engine.profile_similarity("fly ash", "blast furnace slag")
+    ba = engine.profile_similarity("blast furnace slag", "fly ash")
+    assert ab == pytest.approx(ba)
+    assert 0.0 <= ab <= 1.0
+    assert engine.profile_similarity("fly ash", "not a material") is None
+
+
+def test_analogues_are_ranked_and_chemically_sensible():
+    """A stream with no recorded use must still point somewhere defensible."""
+    found = engine.analogues("jarosite", top_n=5)
+    assert len(found) == 5
+    assert found["similarity"].is_monotonic_decreasing
+    assert (found["recorded_uses"] > 0).all(), "an analogue with no uses helps nobody"
+    assert "jarosite" not in set(found["material"])
+    # jarosite is an iron-sulphate residue; its nearest analogues should be other
+    # sulphur- or iron-bearing residues, not a dry fuel
+    assert found.iloc[0]["similarity"] > 0.7
+    assert "sulphur" in found.iloc[0]["shared_properties"] or "iron" in found.iloc[0]["shared_properties"]
+
+
+def test_analogues_for_cement_kiln_dust_find_the_lime_bearing_streams():
+    found = engine.analogues("cement kiln dust", top_n=3)
+    assert "lime" in " ".join(found["shared_properties"]).lower()
+    assert {"lime sludge", "steel slag", "blast furnace slag"} & set(found["material"])
+
+
+def test_analogues_of_an_unknown_material_is_empty_not_an_error():
+    assert engine.analogues("unobtainium sludge").empty
+
+
+def test_every_unplaced_stream_gets_at_least_one_analogue(gaps):
+    for material in gaps["material"]:
+        found = engine.analogues(material, top_n=3)
+        assert len(found) >= 1, f"{material} has no analogue to suggest"
+
+
+# ----------------------------------------------------------------------
+# Multi-hop chains
+# ----------------------------------------------------------------------
+
+def test_chains_are_found_and_well_formed(matches):
+    chains = engine.find_chains(matches)
+    assert len(chains) >= 1
+    assert (chains["hops"] >= 2).all()
+    assert chains["weakest_score"].is_monotonic_decreasing
+    for row in chains.itertuples(index=False):
+        names = row.path.split(" -> ")
+        assert len(names) == len(set(names)), "a facility must not repeat in a chain"
+        assert len(names) == row.hops + 1
+        stages = row.materials.split(" then ")
+        assert len(stages) == row.hops
+        assert len(set(stages)) == len(stages), "consecutive hops must move different materials"
+
+
+def test_chain_links_are_real_matches(matches):
+    chains = engine.find_chains(matches, limit=10)
+    pairs = set(zip(matches["supplier"], matches["receiver"]))
+    for row in chains.itertuples(index=False):
+        names = row.path.split(" -> ")
+        for a, b in zip(names, names[1:]):
+            assert (a, b) in pairs
+
+
+def test_find_chains_on_nothing_is_empty():
+    assert engine.find_chains(engine._empty_matches()).empty
+    assert engine.find_chains(None).empty
+
+
+# ----------------------------------------------------------------------
+# Network optimisation
+# ----------------------------------------------------------------------
+
+def test_optimiser_respects_every_constraint(matches):
+    optimised, report = engine.optimise_network(matches)
+    assert "optimised_tpa" in optimised
+    assert (optimised["optimised_tpa"] >= -1e-6).all()
+    assert (optimised["optimised_tpa"] <= optimised["matched_tpa"] + 1e-6).all()
+    for _, group in optimised.groupby(["supplier", "material"]):
+        assert group["optimised_tpa"].sum() <= group["supplier_output_tpa"].iloc[0] + 1e-3
+    for _, group in optimised.groupby(["receiver", "material"]):
+        assert group["optimised_tpa"].sum() <= group["ceiling_tpa"].iloc[0] + 1e-3
+    for _, group in optimised.groupby("receiver"):
+        assert group["optimised_tpa"].sum() <= group["receiver_need_tpa"].iloc[0] + 1e-3
+
+
+def test_optimiser_is_at_least_as_good_as_greedy(matches):
+    optimised, report = engine.optimise_network(matches)
+    if report["solver"].startswith("linear"):
+        assert report["improvement"] >= -1e-3
+        assert optimised["optimised_net_value"].sum() >= matches["allocated_net_value"].sum() - 1e-3
+
+
+def test_optimiser_declines_loss_making_exchanges(matches):
+    optimised, report = engine.optimise_network(matches)
+    if report["solver"].startswith("linear"):
+        losses = optimised[optimised["net_value"] < 0]
+        assert len(losses) >= 1
+        assert losses["optimised_tpa"].max() < 1.0, (
+            "maximising value should leave every loss-making exchange at zero"
+        )
+
+
+def test_optimiser_on_nothing_returns_the_frame_unchanged():
+    empty = engine._empty_matches()
+    result, report = engine.optimise_network(empty)
+    assert result.empty and report["solver"]
+
+
+# ----------------------------------------------------------------------
+# Circularity and impact
+# ----------------------------------------------------------------------
+
+def test_circularity_is_a_share_of_what_is_actually_produced(facilities, matches):
+    stats = engine.circularity(matches, facilities)
+    offered = facilities[(facilities["output_material"].astype(str).str.strip() != "")
+                         & (facilities["output_tpa"] > 0)]
+    assert stats["total_byproduct_t"] == pytest.approx(float(offered["output_tpa"].sum()))
+    assert 0.0 <= stats["circularity_pct"] <= 100.0
+    assert stats["placed_t"] <= stats["total_byproduct_t"] + 1e-6
+    assert stats["placed_t"] + stats["unplaced_t"] == pytest.approx(stats["total_byproduct_t"])
+    assert stats["landfill_diverted_t"] == pytest.approx(stats["placed_t"])
+    assert stats["virgin_avoided_t"] > 0
+    assert stats["co2_avoided_t"] > 0
+
+
+def test_circularity_can_be_read_off_the_optimised_plan(facilities, matches):
+    optimised, report = engine.optimise_network(matches)
+    stats = engine.circularity(optimised, facilities, tonnes_column="optimised_tpa")
+    assert stats["basis"] == "optimised_tpa"
+    assert 0.0 <= stats["circularity_pct"] <= 100.0
+    if report["solver"].startswith("linear"):
+        assert stats["net_value"] >= engine.circularity(matches, facilities)["net_value"] - 1e-3
+
+
+def test_circularity_of_an_empty_network_is_zero(facilities):
+    stats = engine.circularity(engine._empty_matches(), facilities)
+    assert stats["circularity_pct"] == 0.0
+    assert stats["placed_t"] == 0.0
+    assert stats["unplaced_t"] == stats["total_byproduct_t"]

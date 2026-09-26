@@ -89,6 +89,15 @@ PIPELINE_RATE = 120.0          # INR per tonne-km for heat and gas moved by pipe
                                # km than road, which is why these exchanges only ever
                                # work over a few kilometres.
 
+# Rail. Cheaper per tonne-km than road but it carries a fixed cost at both ends -
+# loading, unloading and the road legs to and from the siding - so it only wins on
+# long hauls of large tonnages. Indian bulk freight rail runs well under road rates
+# per tonne-km; the terminal figure covers both first and last mile.
+RAIL_RATE = 1.9                # INR per tonne-km, bulk rake
+RAIL_TERMINAL_COST = 420       # INR per tonne, both ends: handling plus road legs
+RAIL_MIN_KM = 400              # below this the terminal cost can never be recovered
+RAIL_MIN_TONNES = 20_000       # below this a dedicated rake is not available
+
 REQUIRED_COLUMNS = [
     "name", "sector", "state", "lat", "lon", "output_material",
     "output_tpa", "input_need_tpa", "availability", "authorised_hazardous",
@@ -366,6 +375,24 @@ def _freight_rate(entry: dict) -> float:
     return PIPELINE_RATE if entry.get("transport_mode") == "pipeline" else FREIGHT_RATE
 
 
+def choose_transport(entry: dict, tonnes: float, road_km: float) -> tuple:
+    """Pick the cheaper of road and rail. Returns (mode, rate_per_t_km, terminal_per_t).
+
+    Heat and gas move by pipeline and have no choice. Otherwise rail is considered
+    only when the haul is long enough and the tonnage large enough for a rake, and
+    it is taken only when it actually costs less door to door - terminal handling
+    and the road legs at each end included.
+    """
+    if entry.get("transport_mode") == "pipeline":
+        return "pipeline", PIPELINE_RATE, 0.0
+    if road_km >= RAIL_MIN_KM and tonnes >= RAIL_MIN_TONNES:
+        road_total = road_km * FREIGHT_RATE
+        rail_total = road_km * RAIL_RATE + RAIL_TERMINAL_COST
+        if rail_total < road_total:
+            return "rail", RAIL_RATE, float(RAIL_TERMINAL_COST)
+    return "road", FREIGHT_RATE, 0.0
+
+
 def _score_pair(supplier, receiver, entry: dict) -> dict | None:
     """Score one (supplier, by-product, receiver, application) candidate.
 
@@ -416,12 +443,12 @@ def _score_pair(supplier, receiver, entry: dict) -> dict | None:
 
     # --- valuation, per year ---
     disposal_rate = _disposal_rate(entry)
-    freight_rate = _freight_rate(entry)
+    transport_mode, freight_rate, terminal_rate = choose_transport(entry, matched, road_km)
     processing_rate = PROCESSING_COST[entry["processing"]]
 
     material_value = matched * float(entry["substitution_ratio"]) * float(entry["virgin_value"])
     disposal_saved = matched * disposal_rate
-    transport_cost = matched * road_km * freight_rate
+    transport_cost = matched * road_km * freight_rate + matched * terminal_rate
     processing_cost = matched * processing_rate
     net = material_value + disposal_saved - transport_cost - processing_cost
 
@@ -454,7 +481,7 @@ def _score_pair(supplier, receiver, entry: dict) -> dict | None:
         "road_km": road_km,
         "max_km": max_km,
         "beyond_max_km": road_km > max_km,
-        "transport_mode": entry.get("transport_mode", "road"),
+        "transport_mode": transport_mode,
 
         # factors
         "f_quantity": f_quantity,
@@ -478,6 +505,7 @@ def _score_pair(supplier, receiver, entry: dict) -> dict | None:
         "virgin_value": float(entry["virgin_value"]),
         "disposal_rate": disposal_rate,
         "freight_rate": freight_rate,
+        "terminal_rate": terminal_rate,
         "processing_rate": float(processing_rate),
 
         # environment
@@ -603,7 +631,7 @@ def _empty_matches() -> pd.DataFrame:
         "c_quantity", "c_proximity", "c_timing", "c_processing", "c_compliance",
         "material_value", "disposal_saved", "transport_cost", "processing_cost",
         "net_value", "substitution_ratio", "virgin_value", "disposal_rate",
-        "freight_rate", "processing_rate", "co2_avoided_t", "co2_saved_t",
+        "freight_rate", "terminal_rate", "processing_rate", "co2_avoided_t", "co2_saved_t",
         "processing", "hazard", "receiver_authorised", "supplier_availability",
         "receiver_availability", "basis", "note", "allocated_tpa",
         "allocated_share", "allocated_net_value", "allocated_co2_t",
@@ -904,3 +932,325 @@ def state_activity(matches: pd.DataFrame, facilities: pd.DataFrame) -> pd.DataFr
         .sort_values("state", kind="mergesort")
         .reset_index(drop=True)
     )
+
+
+# ======================================================================
+# Analogue discovery: what does an unplaced stream resemble?
+# ======================================================================
+
+def _profile_distance(a: dict, b: dict) -> float:
+    """Weighted Euclidean distance between two property profiles."""
+    total = 0.0
+    for key in kb.PROFILE_KEYS:
+        weight = kb.PROFILE_WEIGHTS[key]
+        gap = float(a.get(key, 0.0)) - float(b.get(key, 0.0))
+        total += weight * gap * gap
+    return math.sqrt(total)
+
+
+# Every property is bounded 0-1, so the largest distance two profiles can be
+# apart is the square root of the summed weights. Dividing by it puts similarity
+# on a 0-1 scale that means the same thing for every pair.
+_MAX_PROFILE_DISTANCE = math.sqrt(sum(kb.PROFILE_WEIGHTS.values()))
+
+
+def profile_similarity(material_a: str, material_b: str) -> float | None:
+    """0-1 resemblance between two materials, or None if either has no profile."""
+    a, b = kb.profile_for(material_a), kb.profile_for(material_b)
+    if a is None or b is None:
+        return None
+    return 1.0 - (_profile_distance(a, b) / _MAX_PROFILE_DISTANCE)
+
+
+def analogues(material: str, top_n: int = 5, known_uses_only: bool = True) -> pd.DataFrame:
+    """Materials this stream chemically resembles, most alike first.
+
+    This is how the tool reaches beyond its own substitution table. A stream with
+    no recorded use is compared, property by property, against every material the
+    knowledge base does know; the closest matches are candidates whose recorded
+    applications are worth testing. It is a suggestion to investigate, never a
+    scored match - nothing here touches the score or the valuation.
+
+    Deterministic and offline: plain weighted Euclidean distance over the profiles
+    in kb.MATERIAL_PROFILES. No model, no embeddings, no randomness. Each row also
+    reports the properties that agree and the one that does not, so a suggestion
+    can be argued with.
+    """
+    source = kb.profile_for(material)
+    if source is None:
+        return pd.DataFrame(columns=[
+            "material", "similarity", "recorded_uses", "accepting_sectors",
+            "shared_properties", "biggest_difference",
+        ])
+
+    key = str(material).strip().lower()
+    rows = []
+    for name, profile in kb.MATERIAL_PROFILES.items():
+        if name.lower() == key:
+            continue
+        uses = kb.uses_for(name)
+        if known_uses_only and not uses:
+            continue
+
+        # Properties that agree: both sides meaningfully present and close.
+        agreements, differences = [], []
+        for prop in kb.PROFILE_KEYS:
+            a, b = float(source.get(prop, 0.0)), float(profile.get(prop, 0.0))
+            gap = abs(a - b)
+            weight = kb.PROFILE_WEIGHTS[prop]
+            if max(a, b) >= 0.08 and gap <= 0.12:
+                agreements.append((weight * (1.0 - gap) * max(a, b), prop))
+            differences.append((weight * gap, prop))
+        agreements.sort(reverse=True)
+        differences.sort(reverse=True)
+
+        rows.append({
+            "material": name,
+            "similarity": 1.0 - (_profile_distance(source, profile) / _MAX_PROFILE_DISTANCE),
+            "recorded_uses": len(uses),
+            "accepting_sectors": ", ".join(sorted({s for u in uses
+                                                   for s in u["accepting_sectors"]})) or "-",
+            "shared_properties": ", ".join(kb.PROFILE_LABELS[p] for _, p in agreements[:3])
+                                 or "nothing substantial",
+            "biggest_difference": kb.PROFILE_LABELS[differences[0][1]] if differences else "-",
+        })
+
+    if not rows:
+        return pd.DataFrame(columns=[
+            "material", "similarity", "recorded_uses", "accepting_sectors",
+            "shared_properties", "biggest_difference",
+        ])
+    return (
+        pd.DataFrame(rows)
+        .sort_values(["similarity", "material"], ascending=[False, True], kind="mergesort")
+        .head(top_n)
+        .reset_index(drop=True)
+    )
+
+
+# ======================================================================
+# Multi-hop chains: A's waste feeds B, whose waste feeds C
+# ======================================================================
+
+def find_chains(matches: pd.DataFrame, max_hops: int = 3, limit: int = 40) -> pd.DataFrame:
+    """Sequences of exchanges that pass through an intermediate plant.
+
+    A pairwise search sees "Korba sells ash to Bargarh" and "Bargarh buys slag
+    from Bhilai" as unrelated rows. Chained, they describe a cluster: one plant
+    both receiving a by-product and placing its own. Those are the arrangements
+    an industrial park is actually built around, and they are invisible to
+    pair-at-a-time scoring.
+
+    A link is only followed when the next hop moves a *different* material, so a
+    chain describes a plant transforming inputs into a different output rather
+    than simply passing a stream along. A facility never appears twice in one
+    chain. Ranked by the weakest link, because a chain is only as real as its
+    worst exchange.
+    """
+    columns = ["hops", "weakest_score", "mean_score", "total_net_value", "total_co2_t",
+               "path", "materials", "steps", "facilities"]
+    if matches is None or len(matches) == 0 or max_hops < 2:
+        return pd.DataFrame(columns=columns)
+
+    out_edges: dict = {}
+    for row in matches.itertuples(index=False):
+        out_edges.setdefault(row.supplier, []).append(row)
+
+    found = []
+
+    def walk(path_rows, facilities_seen):
+        if len(path_rows) >= 2:
+            found.append(list(path_rows))
+        if len(path_rows) >= max_hops - 1 + 1:
+            return
+        last = path_rows[-1]
+        for nxt in out_edges.get(last.receiver, []):
+            if nxt.receiver in facilities_seen:
+                continue                       # never revisit a plant
+            if str(nxt.material).lower() == str(last.material).lower():
+                continue                       # a different stream, not a pass-through
+            walk(path_rows + [nxt], facilities_seen | {nxt.receiver})
+
+    for row in matches.itertuples(index=False):
+        walk([row], {row.supplier, row.receiver})
+
+    if not found:
+        return pd.DataFrame(columns=columns)
+
+    rows = []
+    for chain in found:
+        scores = [float(e.score) for e in chain]
+        names = [chain[0].supplier] + [e.receiver for e in chain]
+        rows.append({
+            "hops": len(chain),
+            "weakest_score": min(scores),
+            "mean_score": sum(scores) / len(scores),
+            "total_net_value": sum(float(e.net_value) for e in chain),
+            "total_co2_t": sum(float(e.co2_avoided_t) for e in chain),
+            "path": " -> ".join(names),
+            "materials": " then ".join(str(e.material) for e in chain),
+            "steps": " | ".join(
+                f"{e.supplier} sends {e.material} to {e.receiver} ({e.application}, "
+                f"score {e.score:.0f})" for e in chain
+            ),
+            "facilities": len(names),
+        })
+
+    return (
+        pd.DataFrame(rows)
+        .sort_values(["weakest_score", "total_net_value", "path"],
+                     ascending=[False, False, True], kind="mergesort")
+        .head(limit)
+        .reset_index(drop=True)
+    )
+
+
+# ======================================================================
+# Network optimisation
+# ======================================================================
+
+def optimise_network(matches: pd.DataFrame) -> tuple:
+    """Allocate tonnage across the whole network at once, not match by match.
+
+    The greedy pass in _allocate() walks the matches best score first and gives
+    each one whatever is left. That is feasible but not optimal: a high-scoring
+    exchange can consume a supplier's output that two others would have used to
+    better effect, because score measures practicality, not value.
+
+    This solves the allocation as a linear program instead - maximise total net
+    value per year subject to every supplier's output, every receiver's intake,
+    and each receiver's ceiling for a given material. Loss-making exchanges fall
+    out at zero on their own, which is a useful check on the scoring.
+
+    Returns (matches_with_optimised_tpa, report). Falls back to the greedy
+    allocation, with `solver` saying so, when SciPy is unavailable or the solve
+    fails - the app must still run.
+    """
+    report = {"solver": "greedy fallback", "status": "", "objective": 0.0,
+              "improvement": 0.0, "dropped": 0}
+    if matches is None or len(matches) == 0:
+        return matches, report
+
+    result = matches.copy()
+    greedy_value = float(result["allocated_net_value"].sum())
+
+    try:
+        from scipy.optimize import linprog
+    except ImportError:
+        result["optimised_tpa"] = result["allocated_tpa"]
+        result["optimised_net_value"] = result["allocated_net_value"]
+        result["optimised_co2_t"] = result["allocated_co2_t"]
+        report["status"] = "SciPy not installed; showing the greedy allocation."
+        report["objective"] = greedy_value
+        return result, report
+
+    n = len(result)
+    tonnes = result["matched_tpa"].to_numpy(dtype=float)
+    # Value per tonne, so the solver can move part of a match.
+    value_per_tonne = np.divide(
+        result["net_value"].to_numpy(dtype=float), tonnes,
+        out=np.zeros(n), where=tonnes > 0,
+    )
+
+    rows, bounds_rhs = [], []
+
+    def add_constraint(mask, cap):
+        row = np.zeros(n)
+        row[mask] = 1.0
+        rows.append(row)
+        bounds_rhs.append(float(cap))
+
+    supplier_key = list(zip(result["supplier"], result["material"]))
+    for key in dict.fromkeys(supplier_key):
+        mask = [i for i, k in enumerate(supplier_key) if k == key]
+        add_constraint(mask, result["supplier_output_tpa"].iloc[mask[0]])
+
+    receiver_material = list(zip(result["receiver"], result["material"]))
+    for key in dict.fromkeys(receiver_material):
+        mask = [i for i, k in enumerate(receiver_material) if k == key]
+        add_constraint(mask, result["ceiling_tpa"].iloc[mask[0]])
+
+    receivers = list(result["receiver"])
+    for name in dict.fromkeys(receivers):
+        mask = [i for i, r in enumerate(receivers) if r == name]
+        add_constraint(mask, result["receiver_need_tpa"].iloc[mask[0]])
+
+    solution = linprog(
+        c=-value_per_tonne,                       # linprog minimises
+        A_ub=np.array(rows), b_ub=np.array(bounds_rhs),
+        bounds=[(0.0, t) for t in tonnes],
+        method="highs",
+    )
+
+    if not solution.success:
+        result["optimised_tpa"] = result["allocated_tpa"]
+        result["optimised_net_value"] = result["allocated_net_value"]
+        result["optimised_co2_t"] = result["allocated_co2_t"]
+        report["status"] = f"Solver did not converge ({solution.message}); showing greedy."
+        report["objective"] = greedy_value
+        return result, report
+
+    taken = np.clip(solution.x, 0.0, tonnes)
+    share = np.divide(taken, tonnes, out=np.zeros(n), where=tonnes > 0)
+    result["optimised_tpa"] = taken
+    result["optimised_net_value"] = result["net_value"].to_numpy(dtype=float) * share
+    result["optimised_co2_t"] = result["co2_avoided_t"].to_numpy(dtype=float) * share
+
+    optimal_value = float(result["optimised_net_value"].sum())
+    report.update({
+        "solver": "linear programming (HiGHS)",
+        "status": str(solution.message),
+        "objective": optimal_value,
+        "improvement": optimal_value - greedy_value,
+        "dropped": int((taken < 1.0).sum()),
+    })
+    return result, report
+
+
+# ======================================================================
+# Circularity and environmental rollup
+# ======================================================================
+
+def circularity(matches: pd.DataFrame, facilities: pd.DataFrame,
+                tonnes_column: str = "allocated_tpa") -> dict:
+    """How much of the registry's by-product actually finds a home, and what that buys.
+
+    The headline is the share of by-product tonnage placed. It is deliberately a
+    hard number to move: every tonne in the denominator is a tonne somebody
+    produces whether or not this tool finds a use for it.
+    """
+    total_output = 0.0
+    if facilities is not None and len(facilities):
+        offered = facilities[
+            (facilities["output_material"].astype(str).str.strip() != "")
+            & (facilities["output_tpa"] > 0)
+        ]
+        total_output = float(offered["output_tpa"].sum())
+
+    if matches is None or len(matches) == 0 or tonnes_column not in matches:
+        return {"total_byproduct_t": total_output, "placed_t": 0.0, "unplaced_t": total_output,
+                "circularity_pct": 0.0, "landfill_diverted_t": 0.0, "virgin_avoided_t": 0.0,
+                "co2_avoided_t": 0.0, "net_value": 0.0, "basis": tonnes_column}
+
+    placed = matches[tonnes_column].astype(float)
+    virgin = float((placed * matches["substitution_ratio"].astype(float)).sum())
+    co2 = float((placed * matches["co2_saved_t"].astype(float)).sum())
+    value_column = {"allocated_tpa": "allocated_net_value",
+                    "optimised_tpa": "optimised_net_value"}.get(tonnes_column)
+    net = float(matches[value_column].sum()) if value_column in matches else float(
+        (placed / matches["matched_tpa"].replace(0, np.nan)
+         * matches["net_value"]).fillna(0.0).sum()
+    )
+    placed_total = float(placed.sum())
+
+    return {
+        "total_byproduct_t": total_output,
+        "placed_t": placed_total,
+        "unplaced_t": max(0.0, total_output - placed_total),
+        "circularity_pct": (100.0 * placed_total / total_output) if total_output > 0 else 0.0,
+        "landfill_diverted_t": placed_total,
+        "virgin_avoided_t": virgin,
+        "co2_avoided_t": co2,
+        "net_value": net,
+        "basis": tonnes_column,
+    }
