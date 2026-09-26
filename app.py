@@ -338,6 +338,111 @@ def render_audit(row):
     )
 
 # ======================================================================
+# Chart builders for the materials screens
+# ======================================================================
+
+def bullet_chart(report: dict, height_per_row: int = 34) -> go.Figure:
+    """One horizontal bar per limit, with the limit drawn on it as a line.
+
+    Every value that has a threshold is shown against that threshold rather than
+    written out. Bars are scaled to the limit, so 1.0 on the axis IS the limit
+    and the eye reads compliance as "left of the line" without arithmetic.
+    """
+    rows = [r for r in report["results"] if r["measured"]]
+    if not rows:
+        return None
+
+    labels, values, colours, texts = [], [], [], []
+    for result in rows:
+        label = " + ".join(materials.PROPERTY_LABELS.get(p.strip(), p.strip())
+                           for p in result["property"].split("+"))
+        # Both directions share one axis, so the label has to say which way
+        # this row has to go: "at most" bars pass to the left of the line,
+        # "at least" bars pass to the right.
+        label += "  (at most)" if result["operator"] == "<=" else "  (at least)"
+        threshold = result["threshold"] or 1.0
+        ratio = result["actual"] / threshold if threshold else 0.0
+        labels.append(label)
+        values.append(ratio)
+        colours.append(ui.STATUS_GOOD if result["passes"] else ui.STATUS_BAD)
+        word = "PASS" if result["passes"] else "FAIL"
+        texts.append(f'{result["actual"]:g} / {result["operator"]} '
+                     f'{result["threshold"]:g}  {word}')
+
+    fig = go.Figure(go.Bar(
+        x=values, y=labels, orientation="h",
+        marker=dict(color=colours, line=dict(width=0)),
+        text=texts, textposition="outside", textfont=dict(size=10),
+        hoverinfo="text",
+        hovertext=[
+            f'<b>{lab}</b><br>measured {r["actual"]:g}<br>'
+            f'limit {r["operator"]} {r["threshold"]:g}<br>'
+            f'{"inside" if r["passes"] else "outside"} by '
+            f'{abs(r["margin"]):.3g} ({abs(r["headroom_frac"]) * 100:.0f}%)'
+            for lab, r in zip(labels, rows)],
+    ))
+    # The limit itself, at 1.0 on every row because each bar is scaled to it.
+    fig.add_shape(type="line", x0=1, x1=1, y0=-0.5, y1=len(labels) - 0.5,
+                  line=dict(color="#1a1f2b", width=2, dash="dash"))
+    fig.add_annotation(x=1, y=len(labels) - 0.5, text="limit", showarrow=False,
+                       yshift=12, font=dict(size=10, color="#1a1f2b"))
+    fig.update_layout(
+        height=height_per_row * len(labels) + 90,
+        margin=dict(l=0, r=130, t=24, b=6),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#ffffff", font=CHART_FONT,
+        xaxis=dict(title="measured value as a multiple of its limit",
+                   gridcolor="#e4e7ec", zeroline=False,
+                   range=[0, max(1.35, max(values) * 1.35)]),
+        yaxis=dict(gridcolor="rgba(0,0,0,0)", automargin=True,
+                   autorange="reversed"),
+        hoverlabel=HOVER_STYLE, showlegend=False, bargap=0.35,
+    )
+    return fig
+
+
+OXIDE_SEGMENTS = [
+    ("sio2", "SiO2", "#1f5fa9"),
+    ("al2o3", "Al2O3", "#5f93cb"),
+    ("fe2o3", "Fe2O3", "#9fc1e3"),
+    ("cao", "CaO", "#0b3c6b"),
+    ("loi", "Loss on ignition", "#8a93a3"),
+]
+
+
+def composition_bar(props: dict) -> go.Figure:
+    """A single 100% stacked bar: what the stream is actually made of."""
+    named = [(key, label, colour) for key, label, colour in OXIDE_SEGMENTS
+             if props.get(key) is not None]
+    accounted = sum(float(props[key]) for key, _, _ in named)
+    segments = [(label, float(props[key]), colour) for key, label, colour in named]
+    remainder = max(0.0, 100.0 - accounted)
+    if remainder > 0.05:
+        segments.append(("Other / unaccounted", remainder, "#d5d9e0"))
+
+    fig = go.Figure()
+    for label, value, colour in segments:
+        fig.add_trace(go.Bar(
+            x=[value], y=["composition"], orientation="h", name=label,
+            marker=dict(color=colour, line=dict(width=1, color="#ffffff")),
+            text=[f"{label} {value:.1f}%" if value >= 7 else ""],
+            textposition="inside", insidetextanchor="middle",
+            textfont=dict(size=10, color="#ffffff"),
+            hovertemplate=f"<b>{label}</b><br>%{{x:.2f}}%<extra></extra>",
+        ))
+    fig.update_layout(
+        barmode="stack", height=168, margin=dict(l=0, r=0, t=6, b=46),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=CHART_FONT,
+        xaxis=dict(range=[0, 100], showgrid=False, ticksuffix="%", zeroline=False),
+        yaxis=dict(showticklabels=False, showgrid=False),
+        legend=dict(orientation="h", yanchor="top", y=-0.55, x=0,
+                    font=dict(size=10)),
+        hoverlabel=HOVER_STYLE,
+    )
+    return fig
+
+
+# ======================================================================
 # Chrome: utility bar, masthead, sidebar navigation
 # ======================================================================
 
@@ -498,232 +603,177 @@ def limit_table(report: dict) -> pd.DataFrame:
 
 
 if section == "grading":
-    st.markdown(f'<div class="sect">{ui.tr("mg_heading")}</div>',
-                unsafe_allow_html=True)
-    st.markdown(
-        '<p class="sub">The rest of this portal matches material <em>names</em>. '
-        'This grades a stream on what it is actually made of. Every by-product is '
-        'a vector of measured properties; every application is a written '
-        'specification with numeric limits. A verdict is the arithmetic between '
-        'them, and a failure always names the property, the limit, the measured '
-        'value and the size of the gap.</p>',
-        unsafe_allow_html=True,
-    )
-
     stream = st.selectbox(ui.tr("mg_pick"), materials.materials(), index=1,
-                          key="grade_material")
+                          key="grade_material", label_visibility="collapsed")
     profile = materials.properties_of(stream) or {}
     measured = materials.measured_properties(stream)
     ladder = conformance.cascade(stream)
 
-    ui.stat_row([
-        ui.stat_block(ui.tr("mg_qualifies"),
-                      f'{len(ladder["qualifying"])} / {len(ladder["rungs"])}',
-                      "applications in the library"),
-        ui.stat_block(ui.tr("mg_best"),
-                      engine.inr(ladder["best_qualifying_value"]) + " /t",
-                      (ladder["best_qualifying"]["spec"][:46]
-                       if ladder["best_qualifying"] else "nothing in the library")),
-        ui.stat_block(ui.tr("mg_discount"),
-                      engine.inr(ladder["quality_discount"]) + " /t",
-                      f'below {ladder["library_best"][:40]}', bad=True),
-        ui.stat_block("Annual tonnage",
-                      engine.tonnes(profile.get("annual_tpa", 0)),
-                      f'disposal Rs {profile.get("disposal_inr_t", 0):,.0f}/t'),
-    ], columns=4)
+    spec_names = [r["spec"] for r in ladder["rungs"]]
+    # Open on the most valuable rung the stream actually reaches. Opening on one
+    # it misses makes an edge case look like the headline.
+    default_spec = (ladder["best_qualifying"]["spec"]
+                    if ladder["best_qualifying"] else spec_names[-1])
+    picked_spec = st.selectbox(ui.tr("mg_detail"), spec_names,
+                               index=spec_names.index(default_spec),
+                               key="grade_spec", label_visibility="collapsed")
+    report = conformance.grade(stream, picked_spec)
 
-    if profile.get("note"):
-        st.markdown(f'<div class="note">{profile["note"]}</div>',
-                    unsafe_allow_html=True)
-
-    st.markdown(f'<div class="sect">{ui.tr("mg_ladder")}</div>',
-                unsafe_allow_html=True)
+    marginal = report["passes"] and report["grade"] == "B"
     st.markdown(
-        '<p class="sub">Every application in the library, by what it pays. Solid '
-        'bars are the rungs this stream qualifies for today; grey bars are the '
-        'ones it does not reach. The gap between the highest solid bar and the '
-        'top of the chart is the quality discount - what the stream gives up by '
-        'being what it is.</p>',
+        ui.grade_badge(
+            report["grade"], picked_spec,
+            f'{report["standard"]} &middot; basis: {report["confidence"]} '
+            f'&middot; worth {engine.inr(report["value_inr_t"])}/t if it qualifies',
+            "MEETS THIS SPECIFICATION" if report["passes"]
+            else f'FAILS {len(report["failures"])} LIMIT(S)',
+            report["passes"], marginal),
         unsafe_allow_html=True,
     )
-    rungs = list(reversed(ladder["rungs"]))
-    ladder_fig = go.Figure(go.Bar(
-        x=[r["value_inr_t"] for r in rungs],
-        y=[r["spec"] for r in rungs],
-        orientation="h",
-        marker=dict(color=[QUALIFY_COLOUR if r["passes"] else BLOCKED_COLOUR
-                           for r in rungs], line=dict(width=0)),
-        text=[f'{engine.inr(r["value_inr_t"])}  {"qualifies" if r["passes"] else "grade " + r["grade"]}'
-              for r in rungs],
-        textposition="outside",
-        textfont=dict(size=10),
-        hoverinfo="text",
-        hovertext=[
-            f'<b>{r["spec"]}</b><br>{engine.inr(r["value_inr_t"])}/t'
-            f'<br>{"Qualifies" if r["passes"] else "Does not qualify"} - grade {r["grade"]}'
-            + (f'<br>Binding: {r["binding"]["property"]} '
-               f'({r["binding"]["headroom_frac"] * 100:+.0f}% headroom)'
-               if r["binding"] else "")
-            for r in rungs],
-    ))
-    ladder_fig.update_layout(
-        height=30 * len(rungs) + 90, margin=dict(l=0, r=90, t=6, b=0),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#ffffff", font=CHART_FONT,
-        xaxis=dict(title="value of the application, Rs per tonne",
-                   gridcolor="#e4e7ec", zeroline=False,
-                   range=[0, max(r["value_inr_t"] for r in rungs) * 1.32]),
-        yaxis=dict(gridcolor="rgba(0,0,0,0)", automargin=True),
-        hoverlabel=HOVER_STYLE, showlegend=False, bargap=0.25,
-    )
-    st.plotly_chart(ladder_fig, width="stretch", config={"displaylogo": False})
 
-    if ladder["nearest_upgrade"]:
-        upgrade = ladder["nearest_upgrade"]
-        blockers = [f for f in upgrade["failures"] if f["measured"]]
-        if blockers:
-            worst = max(blockers, key=lambda f: abs(f["headroom_frac"]))
-            st.markdown(
-                f'<div class="note"><strong>{ui.tr("mg_upgrade")}:</strong> '
-                f'{upgrade["spec"]} at {engine.inr(upgrade["value_inr_t"])}/t. '
-                f'It is held back by '
-                f'{materials.PROPERTY_LABELS.get(worst["property"], worst["property"])} - '
-                f'the limit is {worst["operator"]} {worst["threshold"]:g} and this stream '
-                f'measures {worst["actual"]:g}, {abs(worst["headroom_frac"]) * 100:.0f}% '
-                f'outside. Closing that one gap is worth '
-                f'{engine.inr(upgrade["value_inr_t"] - ladder["best_qualifying_value"])} '
-                f'a tonne. Try the {ui.tr("tab_blend")} tab.</div>',
-                unsafe_allow_html=True,
-            )
+    binding = report["binding"]
+    chips = [
+        ui.chip(f'{len(ladder["qualifying"])} of {len(ladder["rungs"])} uses',
+                "accent"),
+        ui.chip(f'best {engine.inr(ladder["best_qualifying_value"])}/t', "accent"),
+        ui.chip(f'{engine.tonnes(profile.get("annual_tpa", 0))}/yr'),
+        ui.chip(f'disposal Rs {profile.get("disposal_inr_t", 0):,.0f}/t'),
+    ]
+    if binding:
+        tone = "good" if binding["headroom_frac"] >= 0.15 else (
+            "warn" if binding["headroom_frac"] >= 0 else "bad")
+        chips.append(ui.chip(
+            f'binding: {materials.PROPERTY_LABELS.get(binding["property"], binding["property"])} '
+            f'{binding["headroom_frac"] * 100:+.0f}%', tone))
+    st.markdown(ui.chip_row(chips), unsafe_allow_html=True)
 
-    left, right = st.columns([1, 2.1], gap="medium")
+    left, right = st.columns([1.25, 1], gap="medium")
 
     with left:
-        st.markdown(f'<div class="sect">{ui.tr("mg_composition")}</div>',
-                    unsafe_allow_html=True)
-        composition = pd.DataFrame([{
-            "property": materials.PROPERTY_LABELS.get(k, k),
-            "value": v,
-            "unit": materials.unit_for(k),
-        } for k, v in measured.items()])
+        fig = bullet_chart(report)
+        if fig is not None:
+            st.plotly_chart(fig, width="stretch", config={"displaylogo": False})
+        unmeasured = [r for r in report["results"] if not r["measured"]]
+        if unmeasured:
+            st.markdown(ui.chip_row([
+                ui.chip(f'not measured: '
+                        f'{materials.PROPERTY_LABELS.get(r["property"], r["property"])}',
+                        "bad") for r in unmeasured]), unsafe_allow_html=True)
+        for ratio in report["ratios"]:
+            tone = "good" if ratio["passes"] else "bad"
+            actual = f'{ratio["actual"]:.2f}' if ratio["actual"] is not None else "n/a"
+            st.markdown(ui.chip_row([ui.chip(
+                f'{ratio["expression"]} = {actual} (needs &gt; {ratio["threshold"]:g})',
+                tone)]), unsafe_allow_html=True)
+
+    with right:
+        st.plotly_chart(composition_bar(measured), width="stretch",
+                        config={"displaylogo": False})
+        st.markdown(ui.card_grid([
+            ui.spec_card(r["spec"], r["passes"], r["grade"],
+                         engine.inr(r["value_inr_t"]),
+                         marginal=r["passes"] and r["grade"] == "B")
+            for r in ladder["rungs"][:8]
+        ]), unsafe_allow_html=True)
+
+    with st.expander("Full assessment, limit by limit", expanded=False):
         st.dataframe(
-            composition, hide_index=True, width="stretch", height=430,
+            limit_table(report), hide_index=True, width="stretch",
             column_config={
                 "property": st.column_config.TextColumn("Property", width="medium"),
-                "value": st.column_config.NumberColumn("Value", format="%.3g"),
-                "unit": st.column_config.TextColumn("Unit", width="small"),
+                "required": st.column_config.TextColumn("Required", width="small"),
+                "actual": st.column_config.NumberColumn("Measured", format="%.4g",
+                                                        width="small"),
+                "margin": st.column_config.NumberColumn("Margin", format="%.4g",
+                                                        width="small"),
+                "headroom %": st.column_config.NumberColumn("Headroom %",
+                                                            format="%.1f",
+                                                            width="small"),
+                "verdict": st.column_config.TextColumn("Verdict", width="small"),
+                "basis": st.column_config.TextColumn("Basis of the limit",
+                                                     width="large"),
             },
         )
         st.markdown(
+            f'<p class="caveat">{report["note"]}</p>'
+            f'<p class="caveat">{profile.get("note", "")}</p>'
             '<p class="caveat">Representative composition for a stream of this '
             'type, not an assay of a specific consignment. A real trade needs a '
             'laboratory certificate for the actual material.</p>',
             unsafe_allow_html=True,
         )
 
-    with right:
-        st.markdown(f'<div class="sect">{ui.tr("mg_against")}</div>',
-                    unsafe_allow_html=True)
-        spec_summary = pd.DataFrame([{
-            "application": r["spec"],
-            "verdict": "PASS" if r["passes"] else "FAIL",
-            "grade": r["grade"],
-            "value_inr_t": r["value_inr_t"],
-            "binding property": (materials.PROPERTY_LABELS.get(
-                r["binding"]["property"], r["binding"]["property"])
-                if r["binding"] else "-"),
-            "headroom %": (r["binding"]["headroom_frac"] * 100
-                           if r["binding"] and r["binding"]["headroom_frac"] is not None
-                           else None),
-            "standard": r["standard"],
-            "basis": r["confidence"],
-        } for r in ladder["rungs"]])
-        st.dataframe(
-            spec_summary, hide_index=True, width="stretch", height=430,
-            column_config={
-                "application": st.column_config.TextColumn("Application",
-                                                           width="large"),
-                "verdict": st.column_config.TextColumn("Verdict", width="small"),
-                "grade": st.column_config.TextColumn("Grade", width="small"),
-                "value_inr_t": st.column_config.NumberColumn("Rs/t", format="%.0f",
-                                                             width="small"),
-                "binding property": st.column_config.TextColumn("Binding property",
-                                                                width="medium"),
-                "headroom %": st.column_config.NumberColumn("Headroom %",
-                                                            format="%.1f",
-                                                            width="small"),
-                "standard": st.column_config.TextColumn("Standard", width="medium"),
-                "basis": st.column_config.TextColumn("Basis", width="small"),
-            },
-        )
-        st.markdown(
-            '<p class="caveat">Grades: '
-            + " &middot; ".join(f"<strong>{k}</strong> {v}"
-                                for k, v in GRADE_MEANING.items())
-            + '. "Basis" is <strong>standard</strong> where the limit is taken '
-            'from the named standard, and <strong>indicative</strong> where no '
-            'single published number exists and the threshold reflects common '
-            'practice - never presented as if it were a code requirement.</p>',
-            unsafe_allow_html=True,
-        )
 
-    st.markdown("---")
-    spec_names = [r["spec"] for r in ladder["rungs"]]
-    default_spec = (ladder["nearest_upgrade"]["spec"]
-                    if ladder["nearest_upgrade"] else spec_names[0])
-    picked_spec = st.selectbox(ui.tr("mg_detail"), spec_names,
-                               index=spec_names.index(default_spec),
-                               key="grade_spec")
-    report = conformance.grade(stream, picked_spec)
+# ======================================================================
+# 0a. Value cascade
+# ======================================================================
 
-    verdict_class = "" if report["passes"] else " loss"
-    if report["passes"]:
-        headline = (f'<strong>{stream}</strong> meets <strong>{picked_spec}</strong> '
-                    f'at grade {report["grade"]} - '
-                    f'{GRADE_MEANING[report["grade"]]}.')
-    else:
-        worst = report["failures"][0] if report["failures"] else None
-        if worst and worst["measured"]:
-            headline = (
-                f'<strong>{stream}</strong> does not meet '
-                f'<strong>{picked_spec}</strong>. It fails on '
-                f'{materials.PROPERTY_LABELS.get(worst["property"], worst["property"])}: '
-                f'the limit is {worst["operator"]} {worst["threshold"]:g} and this '
-                f'stream measures {worst["actual"]:g}, a shortfall of '
-                f'{abs(worst["margin"]):.3g} '
-                f'({abs(worst["headroom_frac"]) * 100:.0f}% of the limit).'
-            )
-            if len(report["failures"]) > 1:
-                headline += f' {len(report["failures"]) - 1} further limit(s) also fail.'
-        else:
-            headline = (f'<strong>{stream}</strong> cannot be assessed against '
-                        f'<strong>{picked_spec}</strong>: a required property is '
-                        'not measured for this stream.')
-    st.markdown(f'<div class="note{verdict_class}">{headline}</div>',
-                unsafe_allow_html=True)
+if section == "cascade":
+    stream = st.selectbox(ui.tr("mg_pick"), materials.materials(), index=1,
+                          key="cascade_material", label_visibility="collapsed")
+    ladder = conformance.cascade(stream)
+    best = ladder["best_qualifying"]
 
-    st.dataframe(
-        limit_table(report), hide_index=True, width="stretch",
-        column_config={
-            "property": st.column_config.TextColumn("Property", width="medium"),
-            "required": st.column_config.TextColumn("Required", width="small"),
-            "actual": st.column_config.NumberColumn("Measured", format="%.4g",
-                                                    width="small"),
-            "margin": st.column_config.NumberColumn("Margin", format="%.4g",
-                                                    width="small"),
-            "headroom %": st.column_config.NumberColumn("Headroom %", format="%.1f",
-                                                        width="small"),
-            "verdict": st.column_config.TextColumn("Verdict", width="small"),
-            "basis": st.column_config.TextColumn("Basis of the limit", width="large"),
-        },
+    ui.stat_row([
+        ui.stat_block(ui.tr("mg_discount"),
+                      engine.inr(ladder["quality_discount"]) + " /t",
+                      f'below {ladder["library_best"][:38]}', bad=True),
+        ui.stat_block(ui.tr("mg_best"),
+                      engine.inr(ladder["best_qualifying_value"]) + " /t",
+                      best["spec"][:40] if best else "nothing in the library"),
+        ui.stat_block(ui.tr("mg_qualifies"),
+                      f'{len(ladder["qualifying"])} / {len(ladder["rungs"])}', ""),
+    ], columns=3)
+
+    rungs = list(reversed(ladder["rungs"]))
+    current = best["spec"] if best else None
+    ladder_fig = go.Figure(go.Bar(
+        x=[r["value_inr_t"] for r in rungs],
+        y=[r["spec"] for r in rungs],
+        orientation="h",
+        marker=dict(
+            color=[ui.ACCENT if r["passes"] else ui.NEUTRAL_GREY for r in rungs],
+            line=dict(width=0)),
+        text=[(f'{engine.inr(r["value_inr_t"])}  &#10003;'
+               + ("  &#9664; goes here today" if r["spec"] == current else ""))
+              if r["passes"] else
+              f'{engine.inr(r["value_inr_t"])}  &#128274; grade {r["grade"]}'
+              for r in rungs],
+        textposition="outside", textfont=dict(size=10),
+        hoverinfo="text",
+        hovertext=[
+            f'<b>{r["spec"]}</b><br>{engine.inr(r["value_inr_t"])}/t'
+            f'<br>{"Qualifies" if r["passes"] else "Locked - grade " + r["grade"]}'
+            + (f'<br>Binding: {r["binding"]["property"]} '
+               f'({r["binding"]["headroom_frac"] * 100:+.0f}%)'
+               if r["binding"] else "")
+            for r in rungs],
+    ))
+    ladder_fig.update_layout(
+        height=34 * len(rungs) + 80, margin=dict(l=0, r=190, t=6, b=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#ffffff", font=CHART_FONT,
+        xaxis=dict(title="Rs per tonne of the application", gridcolor="#e4e7ec",
+                   zeroline=False,
+                   range=[0, max(r["value_inr_t"] for r in rungs) * 1.55]),
+        yaxis=dict(gridcolor="rgba(0,0,0,0)", automargin=True),
+        hoverlabel=HOVER_STYLE, showlegend=False, bargap=0.3,
     )
-    st.markdown(
-        f'<p class="caveat"><strong>{report["standard"]}</strong> &middot; '
-        f'basis: {report["confidence"]} &middot; value if it qualifies: '
-        f'{engine.inr(report["value_inr_t"])}/t. Margin is in the property\'s own '
-        'units; a positive margin is inside the limit. '
-        f'{report["note"]}</p>',
-        unsafe_allow_html=True,
-    )
+    st.plotly_chart(ladder_fig, width="stretch", config={"displaylogo": False})
+
+    upgrade = ladder["nearest_upgrade"]
+    if upgrade:
+        blockers = [f for f in upgrade["failures"] if f["measured"]]
+        if blockers:
+            worst = max(blockers, key=lambda f: abs(f["headroom_frac"]))
+            st.markdown(ui.chip_row([
+                ui.chip(f'next rung: {upgrade["spec"][:44]}', "accent"),
+                ui.chip(f'{engine.inr(upgrade["value_inr_t"])}/t', "accent"),
+                ui.chip(f'blocked by '
+                        f'{materials.PROPERTY_LABELS.get(worst["property"], worst["property"])} '
+                        f'{abs(worst["headroom_frac"]) * 100:.0f}% outside', "bad"),
+                ui.chip(f'worth +{engine.inr(upgrade["value_inr_t"] - ladder["best_qualifying_value"])}/t',
+                        "good"),
+            ]), unsafe_allow_html=True)
 
 
 # ======================================================================
