@@ -545,6 +545,18 @@ def money_waterfall(row) -> go.Figure:
     return fig
 
 
+def stream_short(name: str) -> str:
+    """"Fly ash (Talcher TPS)" -> "Talcher TPS".
+
+    Two streams of the same material differ only by the plant, so the plant is
+    what a chip has to show - splitting on the material name makes both read
+    identically.
+    """
+    if "(" in name and name.rstrip().endswith(")"):
+        return name[name.index("(") + 1:name.rindex(")")]
+    return name
+
+
 def match_chips(row) -> str:
     """The operational facts of an exchange, as tags rather than a paragraph."""
     processing = str(row["processing"])
@@ -569,6 +581,72 @@ def match_chips(row) -> str:
     if float(row["net_value"]) < 0:
         chips.append(ui.chip("loses money", "bad"))
     return ui.chip_row(chips)
+
+
+
+def flow_sankey(view: pd.DataFrame, max_flows: int = 18) -> go.Figure:
+    """By-product streams, through applications, to the virgin material displaced.
+
+    The classic industrial-ecology picture: it makes the whole system legible in
+    one image in a way a ranked table never does. Link thickness is tonnes a
+    year, taken from the allocation so the same tonne is not drawn twice.
+    """
+    if view is None or len(view) == 0:
+        return None
+    top = view.nlargest(min(max_flows, len(view)), "allocated_tpa")
+    top = top[top["allocated_tpa"] > 0]
+    if top.empty:
+        top = view.nlargest(min(max_flows, len(view)), "matched_tpa")
+        column = "matched_tpa"
+    else:
+        column = "allocated_tpa"
+
+    materials_in = sorted(top["material"].unique())
+    applications = sorted(top["application"].unique())
+    replaced = sorted(top["replaces"].unique())
+    labels = materials_in + applications + replaced
+    index = {name: i for i, name in enumerate(labels)}
+    offset_app = len(materials_in)
+    offset_rep = offset_app + len(applications)
+
+    sources, targets, values, hovers = [], [], [], []
+    for row in top.itertuples(index=False):
+        tonnes = float(getattr(row, column))
+        sources.append(index[row.material])
+        targets.append(offset_app + applications.index(row.application))
+        values.append(tonnes)
+        hovers.append(f"{row.material} to {row.application}<br>"
+                      f"{engine.tonnes(tonnes)}/yr")
+        sources.append(offset_app + applications.index(row.application))
+        targets.append(offset_rep + replaced.index(row.replaces))
+        values.append(tonnes)
+        hovers.append(f"{row.application} displaces {row.replaces}<br>"
+                      f"{engine.tonnes(tonnes)}/yr")
+
+    node_colours = ([ui.ACCENT] * len(materials_in)
+                    + ["#5f93cb"] * len(applications)
+                    + [ui.STATUS_GOOD] * len(replaced))
+    fig = go.Figure(go.Sankey(
+        arrangement="snap",
+        node=dict(label=labels, pad=13, thickness=14,
+                  color=node_colours,
+                  line=dict(color="#ffffff", width=1),
+                  hovertemplate="%{label}<br>%{value:,.0f} t/yr<extra></extra>"),
+        link=dict(source=sources, target=targets, value=values,
+                  color="rgba(31,95,169,0.22)",
+                  customdata=hovers,
+                  hovertemplate="%{customdata}<extra></extra>"),
+    ))
+    fig.update_layout(
+        # Capped: past this the diagram scrolls off the screen and stops being
+        # the one-image summary it exists to be.
+        height=min(560, max(380, 24 * len(labels))),
+        margin=dict(l=4, r=4, t=26, b=4),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#1a1f2b", size=11, family="Noto Sans, Arial, sans-serif"),
+        hoverlabel=HOVER_STYLE,
+    )
+    return fig
 
 
 
@@ -653,21 +731,29 @@ if facilities.empty:
     st.stop()
 
 unmatched_tonnes = float(gaps["output_tpa"].sum()) if len(gaps) else 0.0
+placed_share = (100.0 * summary["tonnes_diverted"]
+                / max(1.0, impact["total_byproduct_t"]))
+viable_share = (100.0 * (summary["exchanges"] - summary["loss_making"])
+                / max(1, summary["exchanges"]))
 ui.stat_row([
     ui.stat_block(ui.tr("kpi_exchanges"), f"{summary['exchanges']:,}",
-                  f"{summary['suppliers']} {ui.tr('suppliers_receivers')} &middot; "
-                  f"{summary['receivers']} {ui.tr('receivers')}"),
+                  meter=viable_share,
+                  meter_label=f"{summary['loss_making']} {ui.tr('at_a_loss')}",
+                  meter_tone="bad" if summary["loss_making"] else "good"),
     ui.stat_block(ui.tr("kpi_tonnes"), engine.tonnes(summary["tonnes_diverted"]),
-                  ui.tr("per_year")),
+                  meter=placed_share,
+                  meter_label=f"of {engine.tonnes(impact['total_byproduct_t'])} produced"),
     ui.stat_block(ui.tr("kpi_co2"), engine.tonnes(summary["co2_avoided_t"]),
-                  ui.tr("per_year")),
+                  sub=ui.tr("per_year")),
     ui.stat_block(ui.tr("kpi_value"), engine.inr(summary["value_unlocked"]),
-                  f"{summary['loss_making']} {ui.tr('at_a_loss')}",
-                  bad=summary["loss_making"] > 0),
+                  sub=ui.tr("per_year")),
     ui.stat_block(ui.tr("kpi_unmatched"), engine.tonnes(unmatched_tonnes),
-                  f"{len(gaps)} {ui.tr('streams_unplaced')}"),
+                  meter=100.0 - placed_share,
+                  meter_label=f"{len(gaps)} {ui.tr('streams_unplaced')}",
+                  meter_tone="bad"),
     ui.stat_block(ui.tr("kpi_circularity"), f"{impact['circularity_pct']:.1f}%",
-                  f"{ui.tr('of_produced')} {engine.tonnes(impact['total_byproduct_t'])}"),
+                  meter=impact["circularity_pct"],
+                  meter_label=ui.tr("of_produced")),
 ], columns=6)
 
 st.markdown(
@@ -958,7 +1044,7 @@ if section == "blend":
                          "cannot be met" if blocked else ""))
             window_tone = "bad"
 
-        verdict = (f'{ui.GLYPH_PASS} PASSES at {f:.0%} {blend_a.split(" (")[0]}'
+        verdict = (f'{ui.GLYPH_PASS} PASSES at {f:.0%} {stream_short(blend_a)}'
                    if live["passes"] else
                    f'{ui.GLYPH_FAIL} FAILS at {f:.0%} - '
                    f'{len(live["failures"])} limit(s) outside')
@@ -977,11 +1063,11 @@ if section == "blend":
         alone_a = conformance.grade(blend_a, target)
         alone_b = conformance.grade(blend_b, target)
         st.markdown(ui.chip_row([
-            ui.chip(f'{blend_a.split(" (")[0]} alone: '
+            ui.chip(f'{stream_short(blend_a)} alone: '
                     f'{ui.GLYPH_PASS if alone_a["passes"] else ui.GLYPH_FAIL} '
                     f'{alone_a["grade"]}',
                     "good" if alone_a["passes"] else "bad"),
-            ui.chip(f'{blend_b.split(" (")[0]} alone: '
+            ui.chip(f'{stream_short(blend_b)} alone: '
                     f'{ui.GLYPH_PASS if alone_b["passes"] else ui.GLYPH_FAIL} '
                     f'{alone_b["grade"]}',
                     "good" if alone_b["passes"] else "bad"),
@@ -1514,6 +1600,18 @@ if section == "network":
             hoverlabel=HOVER_STYLE, dragmode="pan",
         )
 
+        sankey = flow_sankey(view)
+        if sankey is not None:
+            st.markdown(
+                ui.chip_row([
+                    ui.chip("by-product", "accent"),
+                    ui.chip("&rarr; application"),
+                    ui.chip("&rarr; virgin material displaced", "good"),
+                    ui.chip("thickness = tonnes a year"),
+                ]), unsafe_allow_html=True)
+            st.plotly_chart(sankey, width="stretch",
+                            config={"displaylogo": False})
+
         map_col, side_col = st.columns([2.45, 1], gap="medium")
         with map_col:
             st.plotly_chart(fig, width="stretch",
@@ -1894,178 +1992,139 @@ if section == "gaps":
 if section == "method":
     st.markdown(f'<div class="sect">{ui.tr("method_scoring")}</div>',
                 unsafe_allow_html=True)
-    st.markdown(
-        "A match is one combination of supplier, by-product, receiver and application. The "
-        "score is 100 times the weighted sum of five factors, each normalised to 0-1. The "
-        "same function scores the sample registry, an uploaded registry and a plant you "
-        "describe yourself."
-    )
-    st.dataframe(
-        pd.DataFrame([
-            {"factor": "Quantity", "weight": engine.W_QUANTITY,
-             "formula": "matched_t / ceiling, where ceiling = receiver need x max_share and "
-                        "matched_t = min(supplier output, ceiling)"},
-            {"factor": "Proximity", "weight": engine.W_PROXIMITY,
-             "formula": f"max(0, 1 - (road_km / max_km) ^ {engine.PROXIMITY_EXPONENT})"},
-            {"factor": "Processing", "weight": engine.W_PROCESSING,
-             "formula": "none 1.00, simple 0.85, moderate 0.55, complex 0.25"},
-            {"factor": "Timing", "weight": engine.W_TIMING,
-             "formula": "months in which both sides are active, divided by 12"},
-            {"factor": "Compliance", "weight": engine.W_COMPLIANCE,
-             "formula": f"unregulated {engine.COMPLIANCE_UNREGULATED:.2f}; regulated and "
-                        f"receiver authorised {engine.COMPLIANCE_REGULATED_AUTHORISED:.2f}; "
-                        f"regulated and not {engine.COMPLIANCE_REGULATED_UNAUTHORISED:.2f}"},
-        ]),
-        hide_index=True, width="stretch",
-        column_config={
-            "factor": st.column_config.TextColumn("Factor", width="small"),
-            "weight": st.column_config.NumberColumn("Weight", format="%.2f", width="small"),
-            "formula": st.column_config.TextColumn("Formula", width="large"),
-        },
-    )
 
-    st.markdown('<div class="sect">Gates</div>', unsafe_allow_html=True)
-    st.markdown(
-        f"- Reject any pairing scoring below **{engine.MIN_SCORE_DEFAULT:.0f}**.\n"
-        f"- Reject any haul beyond **max_km x {engine.DISTANCE_HARD_LIMIT}**. Between max_km "
-        "and that limit a match is listed but scores zero on proximity, and is labelled.\n"
-        f"- Reject anything under **{engine.MIN_MATCH_TONNES:.0f} tonne** a year.\n"
-        "- A facility is never matched to itself."
-    )
+    m1, m2 = st.columns([1, 1.25], gap="medium")
+    with m1:
+        weights = list(engine.WEIGHTS.items())
+        donut = go.Figure(go.Pie(
+            labels=[FACTOR_LABELS[k] for k, _ in weights],
+            values=[v for _, v in weights],
+            hole=0.58, sort=False, direction="clockwise",
+            marker=dict(colors=[FACTOR_COLOURS[k] for k, _ in weights],
+                        line=dict(color="#ffffff", width=2)),
+            texttemplate="%{label}<br>%{percent}",
+            textposition="outside", textfont=dict(size=10),
+            hovertemplate="<b>%{label}</b><br>weight %{value:.2f}<extra></extra>",
+        ))
+        donut.add_annotation(text="score<br>weights", showarrow=False,
+                             font=dict(size=13, color="#1a1f2b"))
+        donut.update_layout(
+            height=330, margin=dict(l=10, r=10, t=10, b=10),
+            paper_bgcolor="rgba(0,0,0,0)", showlegend=False, font=CHART_FONT,
+            hoverlabel=HOVER_STYLE,
+        )
+        st.plotly_chart(donut, width="stretch", config={"displaylogo": False})
 
-    st.markdown('<div class="sect">Valuation, per year</div>', unsafe_allow_html=True)
-    st.code(
-        "material_value  = matched_t x substitution_ratio x virgin_value\n"
-        f"disposal_saved  = matched_t x disposal_rate      (default Rs {engine.DISPOSAL_COST_DEFAULT}/t)\n"
-        f"transport_cost  = matched_t x road_km x {engine.FREIGHT_RATE}      (Rs/t-km, bulk road)\n"
-        "processing_cost = matched_t x "
-        f"{{none {engine.PROCESSING_COST['none']}, simple {engine.PROCESSING_COST['simple']}, "
-        f"moderate {engine.PROCESSING_COST['moderate']}, complex {engine.PROCESSING_COST['complex']}}}\n"
-        "net = material_value + disposal_saved - transport_cost - processing_cost",
-        language="text",
-    )
+    with m2:
+        st.markdown(ui.chip_row([
+            ui.chip(f'reject below {engine.MIN_SCORE_DEFAULT:.0f}', "bad"),
+            ui.chip(f'reject beyond max_km x {engine.DISTANCE_HARD_LIMIT}', "bad"),
+            ui.chip(f'reject under {engine.MIN_MATCH_TONNES:.0f} t/yr', "bad"),
+            ui.chip("never matched to itself", "bad"),
+        ]), unsafe_allow_html=True)
+        st.markdown(ui.chip_row([
+            ui.chip(f'road Rs {engine.FREIGHT_RATE}/t-km', "accent"),
+            ui.chip(f'rail Rs {engine.RAIL_RATE}/t-km + Rs {engine.RAIL_TERMINAL_COST}/t',
+                    "accent"),
+            ui.chip(f'pipeline Rs {engine.PIPELINE_RATE:.0f}/t-km', "accent"),
+            ui.chip(f'disposal Rs {engine.DISPOSAL_COST_DEFAULT}/t default', "accent"),
+            ui.chip(f'road factor {engine.ROAD_CIRCUITY_FACTOR:.2f}x haversine',
+                    "accent"),
+        ]), unsafe_allow_html=True)
+        st.markdown(ui.chip_row([
+            ui.chip("capacities representative, not audited", "warn"),
+            ui.chip("rupees gross across both parties, not margin", "warn"),
+            ui.chip("CO2 is displaced production, not a verified credit", "warn"),
+            ui.chip("distance is straight-line, not routed", "warn"),
+            ui.chip("no quality specification checked in the logistics engine",
+                    "warn"),
+            ui.chip("water footprint not modelled", "warn"),
+        ]), unsafe_allow_html=True)
+        st.code(
+            "material_value  = matched_t x substitution_ratio x virgin_value\n"
+            "disposal_saved  = matched_t x disposal_rate\n"
+            "transport_cost  = matched_t x (road_km x rate + terminal)\n"
+            "processing_cost = matched_t x processing_rate\n"
+            "net = material_value + disposal_saved - transport_cost - processing_cost",
+            language="text",
+        )
 
-    st.markdown('<div class="sect">Every assumption, stated</div>', unsafe_allow_html=True)
-    st.markdown(
-        f"""
-- **Distance** is haversine great-circle distance multiplied by
-  **{engine.ROAD_CIRCUITY_FACTOR:.2f}** for road circuity. No routing engine, no traffic, no
-  terrain. A hill road or a river crossing will be worse than this says.
-- **Freight** is **Rs {engine.FREIGHT_RATE}/tonne-km** by bulk road, full truck loads; part
-  loads and return-empty legs cost more. **Rail** is offered at
-  **Rs {engine.RAIL_RATE}/tonne-km** plus **Rs {engine.RAIL_TERMINAL_COST}/tonne** of terminal
-  handling covering both road legs, and is taken only above
-  **{engine.RAIL_MIN_KM} km** and **{engine.RAIL_MIN_TONNES:,} t/yr** and only when it is
-  genuinely cheaper door to door. Each match reports which mode it assumes.
-- **Pipeline** transfer for waste heat and coke oven gas is priced separately at
-  **Rs {engine.PIPELINE_RATE:.0f}/tonne-km** as an amortised figure.
-- **Disposal avoided** defaults to **Rs {engine.DISPOSAL_COST_DEFAULT}/tonne**, overridden per
-  material where that is wrong: a hazardous stream routed to a TSDF costs several times this,
-  a captive ash pond rather less. For fly ash the saving is partly a compliance cost rather
-  than a landfill fee, since utilisation is already mandatory.
-- **Processing costs** are order-of-magnitude figures per tonne handled, not quotations.
-- **Virgin material values** are indicative Indian market levels, not contract prices.
-- **CO2 avoided** counts the displaced virgin material's production emissions only. It is not
-  a verified carbon credit. Process CO2 reuse is **not** sequestration.
-- **max_share** is anchored to Indian standards where they exist: IS 1489 and IS 3812 for fly
-  ash in PPC, IS 455 for slag cement, IS 383 for recycled aggregate, CPCB co-processing
-  guidance for regulated and mixed streams.
-- **Timing** divides overlapping active months by twelve, so a six-month crushing season
+    with st.expander("Scoring formulas, gates and every assumption in full",
+                     expanded=False):
+        st.dataframe(
+            pd.DataFrame([
+                {"factor": "Quantity", "weight": engine.W_QUANTITY,
+                 "formula": "matched_t / ceiling, where ceiling = receiver need "
+                            "x max_share and matched_t = min(supplier output, ceiling)"},
+                {"factor": "Proximity", "weight": engine.W_PROXIMITY,
+                 "formula": f"max(0, 1 - (road_km / max_km) ^ {engine.PROXIMITY_EXPONENT})"},
+                {"factor": "Processing", "weight": engine.W_PROCESSING,
+                 "formula": "none 1.00, simple 0.85, moderate 0.55, complex 0.25"},
+                {"factor": "Timing", "weight": engine.W_TIMING,
+                 "formula": "months in which both sides are active, divided by 12"},
+                {"factor": "Compliance", "weight": engine.W_COMPLIANCE,
+                 "formula": f"unregulated {engine.COMPLIANCE_UNREGULATED:.2f}; "
+                            f"regulated and authorised {engine.COMPLIANCE_REGULATED_AUTHORISED:.2f}; "
+                            f"regulated and not {engine.COMPLIANCE_REGULATED_UNAUTHORISED:.2f}"},
+            ]),
+            hide_index=True, width="stretch",
+            column_config={
+                "factor": st.column_config.TextColumn("Factor", width="small"),
+                "weight": st.column_config.NumberColumn("Weight", format="%.2f",
+                                                        width="small"),
+                "formula": st.column_config.TextColumn("Formula", width="large"),
+            },
+        )
+        st.markdown(
+            f"""
+- Distance is haversine multiplied by **{engine.ROAD_CIRCUITY_FACTOR:.2f}** for road
+  circuity. No routing, no traffic, no terrain.
+- Rail is taken only above **{engine.RAIL_MIN_KM} km** and
+  **{engine.RAIL_MIN_TONNES:,} t/yr**, and only when genuinely cheaper door to door.
+- Disposal avoided defaults to **Rs {engine.DISPOSAL_COST_DEFAULT}/t**, overridden per
+  material; for fly ash the saving is partly a compliance cost, since utilisation is
+  already mandatory.
+- max_share is anchored to IS 1489, IS 3812, IS 455, IS 383 and CPCB co-processing
+  guidance where those exist.
+- Timing divides overlapping active months by twelve, so a six-month crushing season
   feeding a year-round kiln scores 0.50.
-- **Capacities in the sample registry** are representative of plants of that type. They are
-  not audited plant data.
-- **Rupee values** are the gross prize across both parties.
-- **Determinism**: no language model produces any figure here. The explanation text receives
-  finished numbers and only arranges them into sentences.
-- **The map** draws state boundaries from a simplified public GeoJSON bundled with the app,
-  and Plotly's own basemap is switched off, so nothing is fetched from the internet at render
-  time. State fill encodes one chosen metric; it is not a political boundary statement.
+- The quantity factor measures the receiver, not the supplier, so a large supplier can
+  score 1.00 while placing a small fraction of its output - each match also reports
+  supplier_share.
+- Pairwise scores over-commit supply; allocated_tpa is a feasible plan and the
+  optimiser solves the whole allocation at once.
+- The materials layer's property profiles are indicative typical compositions, not
+  assays, and feed only the grading and blending screens - never the logistics score.
+- No language model produces any figure. The same registry always yields the same
+  matches in the same order.
 """
-    )
+        )
 
-    st.markdown('<div class="sect">Known limits of this model</div>', unsafe_allow_html=True)
-    st.markdown(
-        f"""
-- **The quantity factor measures the receiver, not the supplier.** It is
-  `matched_t / ceiling`, so any supplier whose output exceeds the receiver's ceiling scores
-  1.00 - whether it places 90% of its output or 3%. Each match therefore also reports
-  `supplier_share`, and the audit panel says so explicitly.
-- **Scores are pairwise, so `matched_tpa` over-commits supply.** A supplier able to serve six
-  receivers appears at full tonnage against each. The engine adds a greedy best-score-first
-  allocation: `allocated_tpa` is a feasible plan that never promises the same tonne twice. At
-  the current threshold it places **{engine.tonnes(summary['allocated_tonnes'])}** for
-  **{engine.inr(summary['allocated_value'])}**, against a headline
-  **{engine.tonnes(summary['tonnes_diverted'])}** for
-  **{engine.inr(summary['value_unlocked'])}**. Neither is a plan anyone has agreed to.
-- **Energy streams are forced into a mass model.** Waste heat has no tonnage; its registry
-  figure is tonnes of coal equivalent, and coke oven gas is priced on a natural-gas
-  displacement basis.
-- **Knowledge base coverage is the ceiling on discovery.** {len(kb.SUBSTITUTIONS)} substitutions
-  across {len(kb.materials())} materials is a screening tool, not an encyclopaedia.
-- **No quality specification is checked.** Two facilities may both handle 'fly ash' and still
-  be incompatible on fineness, loss on ignition or chloride.
-"""
-    )
-
-    st.markdown('<div class="sect">Beyond the substitution table</div>',
-                unsafe_allow_html=True)
-    st.markdown(
-        f"""
-Three passes run on top of the pairwise scoring. None of them changes a score.
-
-- **Analogue discovery.** The substitution table can only match a stream it already knows,
-  which makes the genuinely hidden exchanges invisible. Every material carries a profile of
-  {len(kb.PROFILE_KEYS)} indicative properties - silica, alumina, lime, iron oxide, sulphur,
-  recoverable metal, organic carbon, calorific value, moisture, bulk density, alkalinity -
-  and an unplaced stream is compared against all {len(kb.MATERIAL_PROFILES)} profiles by
-  weighted Euclidean distance. Deterministic, offline, no model and no embeddings: the same
-  stream always returns the same analogues, and each one names the properties that agree and
-  the one that does not, so it can be argued with. **These profiles are indicative typical
-  compositions, not an assay of anybody's actual waste, and they feed nothing but the
-  resemblance ranking.** A suggestion is a reason to send a sample to a laboratory.
-- **Multi-hop chains.** A depth-first walk over the match graph finds sequences where one
-  plant receives a by-product and places its own. Each hop must move a different material and
-  no facility may repeat, so a chain describes transformation rather than a stream being
-  passed along. Chains are ranked by their weakest link. Chain totals add the individual
-  exchanges and will overstate them where hops compete for the same tonnage.
-- **Network optimisation.** The greedy allocation takes matches best score first, which is
-  feasible but not optimal - score measures practicality, not value. The optimiser solves the
-  whole allocation as a linear program (SciPy HiGHS), maximising total net value subject to
-  every supplier's output, every receiver's intake and each receiver's per-material ceiling.
-  Loss-making exchanges fall to zero on their own rather than by a rule. If SciPy is missing
-  the app falls back to the greedy plan and says so.
-
-**Circularity** is the share of by-product tonnage in the registry that finds a home. The
-denominator is every tonne offered, the unplaced streams included, so it is deliberately hard
-to move. **Virgin material avoided** applies each substitution ratio to the tonnage placed.
-**Water footprint is not modelled** - there is no defensible per-tonne figure for most of
-these streams, and inventing one would undermine every number that is defensible.
-"""
-    )
-
-    st.markdown(f'<div class="sect">Knowledge base: {len(kb.SUBSTITUTIONS)} substitutions</div>',
-                unsafe_allow_html=True)
-    st.markdown(
-        '<p class="sub">The whole basis for matching, browsable. Nothing is matched that is '
-        'not in this table.</p>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(f'<div class="sect">{ui.tr("method_kb")} '
+                f'&mdash; {len(kb.SUBSTITUTIONS)}</div>', unsafe_allow_html=True)
     st.dataframe(
-        kb_table(), hide_index=True, width="stretch", height=460,
+        kb_table(), hide_index=True, width="stretch", height=420,
         column_config={
             "material": st.column_config.TextColumn("By-product", width="medium"),
             "application": st.column_config.TextColumn("Application", width="medium"),
             "replaces": st.column_config.TextColumn("Replaces", width="medium"),
-            "accepting sectors": st.column_config.TextColumn("Accepting sectors", width="medium"),
-            "ratio": st.column_config.NumberColumn("Ratio", format="%.2f", width="small"),
-            "max share": st.column_config.NumberColumn("Max share", format="%.2f", width="small"),
-            "max km": st.column_config.NumberColumn("Max km", format="%.0f", width="small"),
-            "CO2 t/t": st.column_config.NumberColumn("CO2 t/t", format="%.2f", width="small"),
-            "virgin value Rs/t": st.column_config.NumberColumn("Virgin Rs/t", format="%.0f"),
-            "disposal Rs/t": st.column_config.NumberColumn("Disposal Rs/t", format="%.0f"),
+            "accepting sectors": st.column_config.TextColumn("Accepting sectors",
+                                                             width="medium"),
+            "ratio": st.column_config.NumberColumn("Ratio", format="%.2f",
+                                                   width="small"),
+            "max share": st.column_config.NumberColumn("Max share", format="%.2f",
+                                                       width="small"),
+            "max km": st.column_config.NumberColumn("Max km", format="%.0f",
+                                                    width="small"),
+            "CO2 t/t": st.column_config.NumberColumn("CO2 t/t", format="%.2f",
+                                                     width="small"),
+            "virgin value Rs/t": st.column_config.NumberColumn("Virgin Rs/t",
+                                                               format="%.0f"),
+            "disposal Rs/t": st.column_config.NumberColumn("Disposal Rs/t",
+                                                           format="%.0f"),
             "note": st.column_config.TextColumn("Practical catch", width="large"),
         },
     )
 
-    st.markdown('<div class="sect">Registry in use</div>', unsafe_allow_html=True)
-    st.dataframe(facilities, hide_index=True, width="stretch", height=300)
+    with st.expander(ui.tr("method_registry"), expanded=False):
+        st.dataframe(facilities, hide_index=True, width="stretch", height=300)

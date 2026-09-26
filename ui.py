@@ -213,6 +213,9 @@ def inject_styles() -> None:
         div[data-testid="stDataFrame"] {{ font-variant-numeric: tabular-nums; }}
         hr {{ border-color: var(--line); }}
 
+        .meter {{ height: 5px; background: #e8ebef; margin: .4rem 0 .25rem; }}
+        .meter > i {{ display: block; height: 100%; }}
+
         /* ---------- chips, badges and card grids ---------- */
         .chips {{ display: flex; flex-wrap: wrap; gap: .35rem; margin: .1rem 0 .7rem; }}
         .chip {{ display: inline-flex; align-items: center; gap: .3rem;
@@ -380,10 +383,29 @@ def card_grid(cards: list) -> str:
     return '<div class="cards">' + "".join(cards) + '</div>'
 
 
-def stat_block(label: str, value: str, sub: str = "", bad: bool = False) -> str:
-    sub_html = f'<div class="sub{" bad" if bad else ""}">{sub}</div>' if sub else ""
-    return (f'<div class="stat"><div class="lab">{label}</div>'
-            f'<div class="val">{value}</div>{sub_html}</div>')
+def stat_block(label: str, value: str, sub: str = "", bad: bool = False,
+               meter: float | None = None, meter_label: str = "",
+               meter_tone: str = "accent") -> str:
+    """A flat stat. `meter` draws a 0-100 mini-bar under the number.
+
+    The mini-bar replaces a sub-caption that merely restated the label: it shows
+    the number's share of its own whole, which the label never could.
+    """
+    parts = [f'<div class="stat"><div class="lab">{label}</div>'
+             f'<div class="val">{value}</div>']
+    if meter is not None:
+        colour = {"good": STATUS_GOOD, "warn": STATUS_WARN,
+                  "bad": STATUS_BAD}.get(meter_tone, ACCENT)
+        width = max(0.0, min(100.0, float(meter)))
+        parts.append(f'<div class="meter"><i style="width:{width:.1f}%;'
+                     f'background:{colour}"></i></div>')
+        if meter_label:
+            parts.append(f'<div class="sub{" bad" if meter_tone == "bad" else ""}">'
+                         f'{meter_label}</div>')
+    elif sub:
+        parts.append(f'<div class="sub{" bad" if bad else ""}">{sub}</div>')
+    parts.append("</div>")
+    return "".join(parts)
 
 
 def stat_row(blocks: list, columns: int) -> None:
