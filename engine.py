@@ -690,7 +690,10 @@ def unmatched_outputs(facilities: pd.DataFrame, matches: pd.DataFrame) -> pd.Dat
             "state": f["state"],
             "lat": float(f["lat"]),
             "lon": float(f["lon"]),
-            "material": material,
+            # Show the knowledge base's spelling ("FGD gypsum") rather than the
+            # lower-cased registry value, falling back to the registry for a
+            # stream the knowledge base has never heard of.
+            "material": uses[0]["material"] if uses else material,
             "output_tpa": float(f["output_tpa"]),
             "disposal_cost": float(f["output_tpa"]) * disposal,
             "reason": reason,
