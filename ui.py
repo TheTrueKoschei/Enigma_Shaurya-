@@ -12,6 +12,9 @@ CSS custom properties before any widget is drawn.
 
 from __future__ import annotations
 
+import pathlib
+import subprocess
+
 import streamlit as st
 
 from i18n import LANGUAGES, t
@@ -57,6 +60,53 @@ NEUTRAL_GREY = "#b9c0cc"
 GLYPH_PASS = "&#10003;"          # check mark
 GLYPH_FAIL = "&#10007;"          # ballot X
 GLYPH_LOCK = "&#128274;"         # padlock, for a rung not reached
+
+
+# ----------------------------------------------------------------------
+# Build stamp. A hosted instance serves the last build that succeeded, which is
+# not necessarily the newest commit on the branch - a failed build, or a deploy
+# pinned to a branch that no longer exists, both look exactly like "my changes
+# did not appear". Printing the revision the running process was started from
+# turns that guess into a one-glance check: compare it against the branch head
+# on GitHub. BUILD is bumped by hand and survives even when .git is absent.
+# ----------------------------------------------------------------------
+BUILD = "2026-09-26.1"
+
+
+def revision() -> str:
+    """Short commit of the checkout this process is running from, or "" if unknown."""
+    root = pathlib.Path(__file__).resolve().parent
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=root, capture_output=True, text=True, timeout=5, check=False,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    # No git binary in the container, or a tarball deploy. Fall back to reading
+    # the ref files directly, which needs nothing but the filesystem.
+    try:
+        head = (root / ".git" / "HEAD").read_text().strip()
+        if head.startswith("ref: "):
+            ref = (root / ".git" / head[5:]).read_text().strip()
+            return ref[:7]
+        return head[:7]
+    except OSError:
+        return ""
+
+
+def build_stamp() -> None:
+    """Render the build identifier at the foot of the sidebar."""
+    rev = revision()
+    detail = f"build {BUILD}" + (f" &middot; rev {rev}" if rev else "")
+    st.markdown(
+        f'<p class="caveat">{detail}</p>'
+        '<p class="caveat">If this does not match the latest commit on the '
+        'branch, the host is serving an older build.</p>',
+        unsafe_allow_html=True,
+    )
 
 
 def status_colour(passes: bool, marginal: bool = False) -> str:

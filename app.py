@@ -725,6 +725,9 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
+    st.markdown("---")
+    ui.build_stamp()
+
 facilities, problems, matches, gaps, summary = run_engine(csv_text, float(min_score))
 optimised, opt_report, chains = run_extras(csv_text, float(min_score))
 impact = engine.circularity(matches, facilities)
