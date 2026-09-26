@@ -116,16 +116,26 @@ streamlit run app.py          # opens on http://localhost:8501
 python -m pytest test_engine.py -v
 ```
 
-### The four tabs
+### The five tabs
 
-1. **Exchange network** — every exchange drawn on a map of India, thickness and
-   opacity by score, orange where it loses money. Filters for state, material
-   and count.
-2. **Ranked matches** — the full table with a score bar and CSV download, and a
-   detail panel with the plain-language case and the full audit.
-3. **Gap analysis** — by-products with no viable receiver, by tonnage, with the
-   disposal cost carried, why nothing fits, and every recorded use.
-4. **Method** — the weights, the gates, the valuation, every assumption, the
+1. **Find my matches** — describe your own plant from dropdowns (by-product or
+   sector, nearest industrial centre, tonnage, operating season, hazardous-waste
+   authorisation) and every facility in the registry is ranked as a partner. It
+   runs the ordinary engine over the registry with your plant added, then filters
+   to the exchanges you are part of — same five factors, same weights, same
+   gates, so your ranking is directly comparable to everything else in the tool.
+   Each result shows its score band, the money, the tonnage, and flags for the
+   best option, a loss-maker and a haul past its economic limit.
+2. **Exchange network** — every exchange drawn on a map of India with real state
+   boundaries. States are shaded by a metric you choose (exchanges involved,
+   tonnes supplied, tonnes received, facilities); flows are drawn between plants
+   with thickness and opacity by score, dotted red where they lose money. Pan,
+   zoom, hover any state for its totals, and filter by state, material or count.
+3. **Ranked matches** — the full table with a score bar and CSV download, a
+   detail panel with the plain-language case, and the full-width audit.
+4. **Gap analysis** — by-products with no viable receiver, ranked by tonnage with
+   the disposal cost carried, why nothing fits, and every recorded use.
+5. **Method** — the weights, the gates, the valuation, every assumption, the
    known limits, and the whole knowledge base as a browsable table.
 
 The sidebar switches between the sample registry and your own CSV, offers a
@@ -175,14 +185,15 @@ streams with nowhere to go**.
 ## Files
 
 ```
-app.py                  Streamlit interface
-engine.py               matching, scoring, valuation, validation
-kb.py                   substitution knowledge base (48 entries)
-explain.py              computed numbers into plain language
-sample_facilities.csv   sample registry (63 facilities)
-test_engine.py          50 tests, one per acceptance criterion plus invariants
+app.py                      Streamlit interface
+engine.py                   matching, scoring, valuation, validation
+kb.py                       substitution knowledge base (48 entries)
+explain.py                  computed numbers into plain language
+sample_facilities.csv       sample registry (63 facilities)
+data/india_states.geojson   simplified state boundaries for the map (139 KB)
+test_engine.py              62 tests, one per acceptance criterion plus invariants
 requirements.txt
-.streamlit/config.toml  dark theme
+.streamlit/config.toml      dark theme
 ```
 
 ## Limits
@@ -222,10 +233,20 @@ Read this before quoting any number from it.
 - **Energy streams are forced into a mass model.** Waste heat has no tonnage;
   its registry figure is tonnes of coal equivalent, and coke oven gas is priced
   on a natural-gas displacement basis. Both are flagged wherever they appear.
-- **The map basemap outline is fetched by the browser from Plotly's CDN.** It
-  is the only network call anywhere in the app and nothing on the server needs
-  it. Turn the Basemap toggle off for a fully offline view on plain lat/lon
-  axes.
+- **State boundaries are simplified.** They come from a public GeoJSON reduced
+  from 526,000 coordinate points to 7,700 (about 2 km of detail) so the browser
+  can draw the country instantly. They are for orientation, not for measuring
+  anything, and are not a statement about any boundary.
+- **The map is drawn as plain filled shapes, not on a Plotly geo projection.** A
+  geo subplot fetches its own basemap from Plotly's CDN even with the basemap
+  switched off, and this app is meant to run with no internet. Longitude is
+  plotted as x, latitude as y, with the aspect ratio anchored at 1.08 (a degree
+  of latitude is about 111 km; a degree of longitude about 103 km at 22°N). Over
+  a country this size the distortion is cosmetic, and no distance shown anywhere
+  is measured off the map — every one is haversine, computed in `engine.py`.
+- **The app makes one external request: a Google Fonts stylesheet.** Nothing
+  depends on it; without a connection the type falls back to the system stack and
+  everything else, the map included, works exactly the same.
 
 ## Testing
 
@@ -233,7 +254,7 @@ Read this before quoting any number from it.
 python -m pytest test_engine.py -v
 ```
 
-50 tests covering: the knowledge base is well formed and anchored to the
+62 tests covering: the knowledge base is well formed and anchored to the
 standards it cites; matched tonnage never exceeds supplier output or the
 receiver's ceiling; no self-matches; no match beyond `max_km × 1.5`; scores are
 spread rather than clustered and equal the sum of their weighted contributions;
@@ -242,5 +263,9 @@ seasonal suppliers score below 1.0 on timing; regulated materials score below
 loss-making matches are listed and their explanations say so; the allocation
 never over-commits a supplier or a receiver; results are identical when the
 input rows are shuffled; a CSV with missing columns, text in numeric fields and
-bad coordinates produces warnings rather than a traceback; and every match and
-every gap produces explanation text.
+bad coordinates produces warnings rather than a traceback; every match and
+every gap produces explanation text; a plant described through the interface is
+scored by the same engine with no special-casing, and its compliance factor
+responds to the hazardous-waste authorisation toggle; the state rollup
+reconciles against the allocation; and the bundled boundary file covers every
+state in the registry with closed rings inside India's bounding box.

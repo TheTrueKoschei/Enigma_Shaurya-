@@ -435,3 +435,150 @@ def test_haversine_against_a_known_distance():
     d = engine.haversine_km(21.1938, 81.3509, 22.8046, 86.2029)
     assert 515 < d < 545
     assert engine.haversine_km(21.0, 81.0, 21.0, 81.0) == pytest.approx(0.0)
+
+
+# ----------------------------------------------------------------------
+# "What could my plant do?" - a facility the user describes
+# ----------------------------------------------------------------------
+
+def test_build_facility_matches_the_registry_schema():
+    one = engine.build_facility("My plant", "Cement", "Madhya Pradesh", 23.18, 79.98,
+                                input_need_tpa=1_200_000, authorised_hazardous=True)
+    assert list(one.columns) == engine.REQUIRED_COLUMNS
+    assert one.iloc[0]["sector"] == "cement"          # normalised like validate() does
+    assert one.iloc[0]["authorised_hazardous"] is True or bool(one.iloc[0]["authorised_hazardous"])
+
+
+def test_a_described_receiver_gets_a_ranked_list(facilities):
+    me = engine.build_facility("My plant", "cement", "Maharashtra", 21.1458, 79.0882,
+                               input_need_tpa=1_200_000)
+    mine = engine.matches_for_facility(facilities, me)
+    assert len(mine) >= 3
+    assert list(mine["rank"]) == list(range(1, len(mine) + 1))
+    assert mine["score"].is_monotonic_decreasing
+    assert (mine["receiver"] == "My plant").all()
+    assert (mine["role"] == "receiver").all()
+    assert (mine["partner"] == mine["supplier"]).all()
+
+
+def test_a_described_supplier_gets_a_ranked_list(facilities):
+    me = engine.build_facility("My plant", "thermal power", "Maharashtra", 21.1458, 79.0882,
+                               output_material="fly ash", output_tpa=250_000)
+    mine = engine.matches_for_facility(facilities, me)
+    assert len(mine) >= 1
+    assert (mine["supplier"] == "My plant").all()
+    assert (mine["role"] == "supplier").all()
+    assert (mine["partner"] == mine["receiver"]).all()
+
+
+def test_my_plant_is_scored_by_the_same_engine(facilities):
+    """A described plant must not get special treatment - same weights, same gates."""
+    me = engine.build_facility("My plant", "cement", "Maharashtra", 21.1458, 79.0882,
+                               input_need_tpa=1_200_000)
+    mine = engine.matches_for_facility(facilities, me)
+    assert len(mine)
+    total = (mine["c_quantity"] + mine["c_proximity"] + mine["c_timing"]
+             + mine["c_processing"] + mine["c_compliance"])
+    assert (total - mine["score"]).abs().max() < 0.01
+    assert (mine["score"] >= engine.MIN_SCORE_DEFAULT).all()
+    assert (mine["matched_tpa"] <= mine["ceiling_tpa"] + 1e-9).all()
+    assert (mine["road_km"] <= mine["max_km"] * engine.DISTANCE_HARD_LIMIT + 1e-9).all()
+
+
+def test_my_plant_never_matches_itself_or_duplicates_a_registry_row(facilities):
+    """Describing a plant that shares a registry name must replace it, not clone it."""
+    existing = facilities.iloc[0]["name"]
+    me = engine.build_facility(existing, "cement", "Maharashtra", 21.1458, 79.0882,
+                               input_need_tpa=900_000)
+    mine = engine.matches_for_facility(facilities, me)
+    assert (mine["supplier"] != mine["receiver"]).all()
+    for row in mine.itertuples(index=False):
+        assert row.partner != existing
+
+
+def test_authorisation_changes_a_regulated_match_for_my_plant(facilities):
+    """The compliance factor must respond to the toggle the interface offers."""
+    def best_regulated(authorised):
+        me = engine.build_facility("My plant", "cement", "Odisha", 21.3333, 83.6167,
+                                   input_need_tpa=1_800_000,
+                                   authorised_hazardous=authorised)
+        mine = engine.matches_for_facility(facilities, me, min_score=0.0)
+        regulated = mine[mine["hazard"] == "regulated"]
+        return regulated
+
+    without = best_regulated(False)
+    with_auth = best_regulated(True)
+    assert len(without) and len(with_auth)
+    assert (without["f_compliance"] == engine.COMPLIANCE_REGULATED_UNAUTHORISED).all()
+    assert (with_auth["f_compliance"] == engine.COMPLIANCE_REGULATED_AUTHORISED).all()
+    assert with_auth["score"].max() > without["score"].max()
+
+
+def test_matches_for_facility_with_nothing_to_offer_is_empty(facilities):
+    me = engine.build_facility("My plant", "cement", "Kerala", 9.93, 76.27)
+    assert engine.matches_for_facility(facilities, me).empty
+    assert engine.matches_for_facility(facilities, None).empty
+
+
+def test_season_presets_all_parse():
+    for label, value in engine.SEASON_PRESETS.items():
+        months = engine.active_months(value)
+        assert 1 <= len(months) <= 12, f"{label} parsed to {months}"
+    assert len(engine.active_months(engine.SEASON_PRESETS["Year-round"])) == 12
+    assert len(engine.active_months(
+        engine.SEASON_PRESETS["Sugar crushing season (Nov-Apr)"])) == 6
+
+
+def test_sector_and_material_lookups_agree_with_the_knowledge_base():
+    for sector in kb.sectors():
+        materials = engine.materials_for_sector(sector)
+        assert materials, f"{sector} accepts nothing"
+        for material in materials:
+            assert sector in engine.sectors_for_material(material)
+    assert "cement" in engine.sectors_for_material("fly ash")
+    assert engine.materials_for_sector("not a real sector") == []
+
+
+# ----------------------------------------------------------------------
+# State rollup and the bundled map
+# ----------------------------------------------------------------------
+
+def test_state_activity_totals_reconcile(facilities, matches):
+    activity = engine.state_activity(matches, facilities)
+    assert len(activity) >= 1
+    assert activity["facilities"].sum() == len(facilities)
+    assert activity["tonnes_supplied"].sum() == pytest.approx(matches["allocated_tpa"].sum())
+    assert activity["tonnes_received"].sum() == pytest.approx(matches["allocated_tpa"].sum())
+    assert (activity["exchanges"] >= 0).all()
+
+
+def test_state_activity_of_nothing_still_lists_the_registry(facilities):
+    activity = engine.state_activity(engine._empty_matches(), facilities)
+    assert len(activity) >= 1
+    assert activity["exchanges"].sum() == 0
+    assert activity["facilities"].sum() == len(facilities)
+
+
+def test_bundled_state_boundaries_are_usable(facilities):
+    """The map draws from this file, so nothing is fetched at render time."""
+    import json
+    import os
+    path = "data/india_states.geojson"
+    assert os.path.exists(path), "the map's boundary data must ship with the app"
+    assert os.path.getsize(path) < 2_000_000, "keep the bundled geometry small enough to draw"
+    with open(path, encoding="utf-8") as fh:
+        geo = json.load(fh)
+    assert geo["type"] == "FeatureCollection"
+    assert len(geo["features"]) >= 30
+    named = {f["properties"]["state"] for f in geo["features"]}
+    for feature in geo["features"]:
+        assert feature["geometry"]["type"] == "MultiPolygon"
+        for polygon in feature["geometry"]["coordinates"]:
+            for ring in polygon:
+                assert len(ring) >= 4
+                assert ring[0] == ring[-1], "every ring must close"
+                for lon, lat in ring:
+                    assert 67.0 <= lon <= 98.5 and 6.0 <= lat <= 37.5
+    # every state in the sample registry must be paintable on the map
+    missing = {str(s) for s in facilities["state"].unique()} - named
+    assert not missing, f"no boundary for {missing}"

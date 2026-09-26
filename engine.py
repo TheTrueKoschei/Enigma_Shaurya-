@@ -769,3 +769,138 @@ def template_csv() -> str:
         "Example Sugar Mill,sugar,Uttar Pradesh,29.4720,77.7040,bagasse,180000,0,"
         "crushing season (Nov-Apr),no\n"
     )
+
+
+# ======================================================================
+# User-supplied facility: "what could my plant do?"
+# ======================================================================
+
+# Season presets offered in the interface, mapped to the availability strings
+# active_months() understands. Keys are what the user sees.
+SEASON_PRESETS = {
+    "Year-round": "continuous (year-round)",
+    "Sugar crushing season (Nov-Apr)": "crushing season (Nov-Apr)",
+    "Kharif milling (Oct-Jan)": "kharif milling (Oct-Jan)",
+    "Dry-season construction (Oct-May)": "dry season (Oct-May)",
+    "Dairy flush (Oct-Feb)": "flush season (Oct-Feb)",
+    "Summer peak (Mar-Jun)": "peak season (Mar-Jun)",
+    "Rabi sowing (Oct-Mar)": "rabi sowing (Oct-Mar)",
+    "Kharif sowing (Jun-Oct)": "kharif sowing (Jun-Oct)",
+}
+
+MY_FACILITY_NAME = "My plant"
+
+
+def build_facility(name, sector, state, lat, lon, output_material="", output_tpa=0.0,
+                   input_need_tpa=0.0, availability="continuous (year-round)",
+                   authorised_hazardous=False) -> pd.DataFrame:
+    """One registry row in the shape validate() produces, for a user's own plant."""
+    return pd.DataFrame([{
+        "name": str(name),
+        "sector": str(sector).strip().lower(),
+        "state": str(state),
+        "lat": float(lat),
+        "lon": float(lon),
+        "output_material": str(output_material).strip().lower(),
+        "output_tpa": float(output_tpa),
+        "input_need_tpa": float(input_need_tpa),
+        "availability": str(availability),
+        "authorised_hazardous": bool(authorised_hazardous),
+    }])[REQUIRED_COLUMNS]
+
+
+def matches_for_facility(facilities: pd.DataFrame, my_facility: pd.DataFrame,
+                         min_score: float = MIN_SCORE_DEFAULT) -> pd.DataFrame:
+    """Rank every partner in the registry for one facility the user described.
+
+    The facility is added to the registry and the ordinary engine is run over the
+    whole thing - same five factors, same gates, same weights - then the results
+    are filtered to the exchanges this facility takes part in. Nothing about the
+    scoring is special-cased for the user's plant, which is what makes the
+    ranking comparable to the rest of the tool.
+    """
+    if my_facility is None or len(my_facility) == 0:
+        return _empty_matches()
+
+    name = str(my_facility.iloc[0]["name"])
+    others = facilities[facilities["name"] != name] if len(facilities) else facilities
+    combined = pd.concat([others, my_facility], ignore_index=True)
+
+    everything = find_matches(combined, min_score)
+    if everything.empty:
+        return everything
+
+    mine = everything[
+        (everything["supplier"] == name) | (everything["receiver"] == name)
+    ].copy()
+    if mine.empty:
+        return _empty_matches()
+
+    mine["role"] = np.where(mine["supplier"] == name, "supplier", "receiver")
+    mine["partner"] = np.where(mine["supplier"] == name,
+                               mine["receiver"], mine["supplier"])
+    mine["partner_sector"] = np.where(mine["supplier"] == name,
+                                      mine["receiver_sector"], mine["supplier_sector"])
+    mine["partner_state"] = np.where(mine["supplier"] == name,
+                                     mine["receiver_state"], mine["supplier_state"])
+    mine = mine.drop(columns=["rank"])
+    mine.insert(0, "rank", np.arange(1, len(mine) + 1))
+    return mine.reset_index(drop=True)
+
+
+def materials_for_sector(sector: str) -> list:
+    """By-products a plant in this sector could accept, for the receiver dropdown."""
+    key = str(sector).strip().lower()
+    return sorted({
+        e["material"] for e in kb.SUBSTITUTIONS
+        if any(s.lower() == key for s in e["accepting_sectors"])
+    })
+
+
+def sectors_for_material(material: str) -> list:
+    """Sectors that can take this by-product, for the supplier-side hint."""
+    return sorted({s for e in kb.uses_for(material) for s in e["accepting_sectors"]})
+
+
+# ======================================================================
+# State-level rollup, for the choropleth
+# ======================================================================
+
+def state_activity(matches: pd.DataFrame, facilities: pd.DataFrame) -> pd.DataFrame:
+    """Per-state totals.
+
+    Supplied and received are kept apart rather than summed: adding them would
+    count an exchange twice whenever both plants sit in the same state, and the
+    two numbers answer different questions anyway.
+    """
+    states = sorted({str(s) for s in facilities["state"].unique()}) if len(facilities) else []
+    rows = {s: {"state": s, "exchanges": 0, "tonnes_supplied": 0.0,
+                "tonnes_received": 0.0, "net_value": 0.0, "facilities": 0}
+            for s in states}
+
+    if len(facilities):
+        for s, n in facilities["state"].value_counts().items():
+            rows.setdefault(str(s), {"state": str(s), "exchanges": 0,
+                                     "tonnes_supplied": 0.0, "tonnes_received": 0.0,
+                                     "net_value": 0.0, "facilities": 0})
+            rows[str(s)]["facilities"] = int(n)
+
+    if matches is not None and len(matches):
+        for row in matches.itertuples(index=False):
+            for state in {str(row.supplier_state), str(row.receiver_state)}:
+                rows.setdefault(state, {"state": state, "exchanges": 0,
+                                        "tonnes_supplied": 0.0, "tonnes_received": 0.0,
+                                        "net_value": 0.0, "facilities": 0})
+                rows[state]["exchanges"] += 1
+                rows[state]["net_value"] += float(row.allocated_net_value)
+            rows[str(row.supplier_state)]["tonnes_supplied"] += float(row.allocated_tpa)
+            rows[str(row.receiver_state)]["tonnes_received"] += float(row.allocated_tpa)
+
+    if not rows:
+        return pd.DataFrame(columns=["state", "exchanges", "tonnes_supplied",
+                                     "tonnes_received", "net_value", "facilities"])
+    return (
+        pd.DataFrame(list(rows.values()))
+        .sort_values("state", kind="mergesort")
+        .reset_index(drop=True)
+    )

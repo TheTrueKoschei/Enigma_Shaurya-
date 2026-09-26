@@ -1,10 +1,16 @@
 [theme]
 base = "dark"
-primaryColor = "#4cc9a4"
-backgroundColor = "#0e1117"
-secondaryBackgroundColor = "#161a25"
-textColor = "#e6e9ef"
+primaryColor = "#2bd99b"
+backgroundColor = "#0b0e14"
+secondaryBackgroundColor = "#131824"
+textColor = "#e9edf5"
 font = "sans serif"
 
 [server]
 headless = true
+
+[browser]
+# No usage telemetry. With this off the only request the app makes to the
+# outside world is the Google Fonts stylesheet, which is purely cosmetic and
+# falls back to system fonts when there is no connection.
+gatherUsageStats = false
