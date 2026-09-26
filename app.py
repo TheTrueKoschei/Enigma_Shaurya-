@@ -215,24 +215,50 @@ def flag_column(frame: pd.DataFrame) -> pd.Series:
     return pd.Series(flags, index=frame.index)
 
 
-def render_narrative(row):
-    story = explain.explain(row)
+def render_verdict(row):
+    """One sentence and the operational chips - fits a narrow column."""
     loss = float(row["net_value"]) < 0
     st.markdown(
-        f'<div class="note{" loss" if loss else ""}">{story["headline"]}</div>',
+        f'<div class="note{" loss" if loss else ""}">'
+        f'<strong>{row["supplier"]} &rarr; {row["receiver"]}</strong>: '
+        f'{engine.tonnes(row["matched_tpa"])} of {row["material"]} a year for '
+        f'{row["application"]}, scoring {float(row["score"]):.0f} and worth '
+        f'{engine.inr(row["net_value"])} a year.</div>',
         unsafe_allow_html=True,
     )
-    if bool(row["beyond_max_km"]):
-        st.warning(
-            f"This haul of {row['road_km']:,.0f} km is past the {row['max_km']:,.0f} km "
-            f"economic limit for {row['material']}. It is admitted by the distance gate "
-            "but scores zero on proximity.",
-            icon=None,
-        )
-    for title in explain.SECTION_ORDER:
-        st.markdown(f'<p class="sec-title">{title}</p>', unsafe_allow_html=True)
-        st.markdown(f'<p class="sec-body">{story["sections"][title]}</p>',
-                    unsafe_allow_html=True)
+    st.markdown(match_chips(row), unsafe_allow_html=True)
+
+
+def render_detail_charts(row):
+    """Score composition and the money, given the full page width.
+
+    Kept out of render_verdict because these two need room: nested inside a
+    half-width column the legend collides with the axis.
+    """
+    left, right = st.columns([1, 1], gap="medium")
+    with left:
+        st.plotly_chart(score_bar(row), width="stretch",
+                        config={"displaylogo": False})
+    with right:
+        st.plotly_chart(money_waterfall(row), width="stretch",
+                        config={"displaylogo": False})
+
+    story = explain.explain(row)
+    loss = float(row["net_value"]) < 0
+    with st.expander("Full assessment", expanded=False):
+        st.markdown(f'<div class="note{" loss" if loss else ""}">'
+                    f'{story["headline"]}</div>', unsafe_allow_html=True)
+        for title in explain.SECTION_ORDER:
+            st.markdown(f'<p class="sec-title">{title}</p>',
+                        unsafe_allow_html=True)
+            st.markdown(f'<p class="sec-body">{story["sections"][title]}</p>',
+                        unsafe_allow_html=True)
+
+
+def render_narrative(row):
+    """Verdict then charts, for callers that have the full width already."""
+    render_verdict(row)
+    render_detail_charts(row)
 
 
 def render_audit(row):
@@ -338,13 +364,336 @@ def render_audit(row):
     )
 
 # ======================================================================
-# Chrome: utility bar, masthead, sidebar
+# Chart builders for the materials screens
 # ======================================================================
+
+def bullet_chart(report: dict, height_per_row: int = 34) -> go.Figure:
+    """One horizontal bar per limit, with the limit drawn on it as a line.
+
+    Every value that has a threshold is shown against that threshold rather than
+    written out. Bars are scaled to the limit, so 1.0 on the axis IS the limit
+    and the eye reads compliance as "left of the line" without arithmetic.
+    """
+    rows = [r for r in report["results"] if r["measured"]]
+    if not rows:
+        return None
+
+    labels, values, colours, texts = [], [], [], []
+    for result in rows:
+        label = " + ".join(materials.PROPERTY_LABELS.get(p.strip(), p.strip())
+                           for p in result["property"].split("+"))
+        # Both directions share one axis, so the label has to say which way
+        # this row has to go: "at most" bars pass to the left of the line,
+        # "at least" bars pass to the right.
+        label += "  (at most)" if result["operator"] == "<=" else "  (at least)"
+        threshold = result["threshold"] or 1.0
+        ratio = result["actual"] / threshold if threshold else 0.0
+        labels.append(label)
+        values.append(ratio)
+        colours.append(ui.STATUS_GOOD if result["passes"] else ui.STATUS_BAD)
+        word = "PASS" if result["passes"] else "FAIL"
+        texts.append(f'{result["actual"]:g} / {result["operator"]} '
+                     f'{result["threshold"]:g}  {word}')
+
+    fig = go.Figure(go.Bar(
+        x=values, y=labels, orientation="h",
+        marker=dict(color=colours, line=dict(width=0)),
+        text=texts, textposition="outside", textfont=dict(size=10),
+        hoverinfo="text",
+        hovertext=[
+            f'<b>{lab}</b><br>measured {r["actual"]:g}<br>'
+            f'limit {r["operator"]} {r["threshold"]:g}<br>'
+            f'{"inside" if r["passes"] else "outside"} by '
+            f'{abs(r["margin"]):.3g} ({abs(r["headroom_frac"]) * 100:.0f}%)'
+            for lab, r in zip(labels, rows)],
+    ))
+    # The limit itself, at 1.0 on every row because each bar is scaled to it.
+    fig.add_shape(type="line", x0=1, x1=1, y0=-0.5, y1=len(labels) - 0.5,
+                  line=dict(color="#1a1f2b", width=2, dash="dash"))
+    fig.add_annotation(x=1, y=len(labels) - 0.5, text="limit", showarrow=False,
+                       yshift=12, font=dict(size=10, color="#1a1f2b"))
+    fig.update_layout(
+        height=height_per_row * len(labels) + 90,
+        margin=dict(l=0, r=130, t=24, b=6),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#ffffff", font=CHART_FONT,
+        xaxis=dict(title="measured value as a multiple of its limit",
+                   gridcolor="#e4e7ec", zeroline=False,
+                   range=[0, max(1.35, max(values) * 1.35)]),
+        yaxis=dict(gridcolor="rgba(0,0,0,0)", automargin=True,
+                   autorange="reversed"),
+        hoverlabel=HOVER_STYLE, showlegend=False, bargap=0.35,
+    )
+    return fig
+
+
+OXIDE_SEGMENTS = [
+    ("sio2", "SiO2", "#1f5fa9"),
+    ("al2o3", "Al2O3", "#5f93cb"),
+    ("fe2o3", "Fe2O3", "#9fc1e3"),
+    ("cao", "CaO", "#0b3c6b"),
+    ("loi", "Loss on ignition", "#8a93a3"),
+]
+
+
+def composition_bar(props: dict) -> go.Figure:
+    """A single 100% stacked bar: what the stream is actually made of."""
+    named = [(key, label, colour) for key, label, colour in OXIDE_SEGMENTS
+             if props.get(key) is not None]
+    accounted = sum(float(props[key]) for key, _, _ in named)
+    segments = [(label, float(props[key]), colour) for key, label, colour in named]
+    remainder = max(0.0, 100.0 - accounted)
+    if remainder > 0.05:
+        segments.append(("Other / unaccounted", remainder, "#d5d9e0"))
+
+    fig = go.Figure()
+    for label, value, colour in segments:
+        fig.add_trace(go.Bar(
+            x=[value], y=["composition"], orientation="h", name=label,
+            marker=dict(color=colour, line=dict(width=1, color="#ffffff")),
+            text=[f"{label} {value:.1f}%" if value >= 7 else ""],
+            textposition="inside", insidetextanchor="middle",
+            textfont=dict(size=10, color="#ffffff"),
+            hovertemplate=f"<b>{label}</b><br>%{{x:.2f}}%<extra></extra>",
+        ))
+    fig.update_layout(
+        barmode="stack", height=168, margin=dict(l=0, r=0, t=6, b=46),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=CHART_FONT,
+        xaxis=dict(range=[0, 100], showgrid=False, ticksuffix="%", zeroline=False),
+        yaxis=dict(showticklabels=False, showgrid=False),
+        legend=dict(orientation="h", yanchor="top", y=-0.55, x=0,
+                    font=dict(size=10)),
+        hoverlabel=HOVER_STYLE,
+    )
+    return fig
+
+
+# Five factor identities for the score breakdown. Validated adjacent-pair on the
+# light surface; every segment is also labelled and legended, which is what the
+# two low-contrast steps require. Deliberately avoids the status green and red,
+# which are reserved for pass and fail everywhere else.
+FACTOR_COLOURS = {
+    "quantity": "#2a78d6", "proximity": "#eb6834", "timing": "#4a3aa7",
+    "processing": "#eda100", "compliance": "#e87ba4",
+}
+FACTOR_LABELS = {
+    "quantity": "Quantity", "proximity": "Proximity", "timing": "Timing",
+    "processing": "Processing", "compliance": "Compliance",
+}
+
+
+def score_bar(row) -> go.Figure:
+    """One stacked bar: each factor sized by weight x its value, out of 100."""
+    fig = go.Figure()
+    for key in ("quantity", "proximity", "timing", "processing", "compliance"):
+        points = float(row[f"c_{key}"])
+        raw = float(row[f"f_{key}"])
+        weight = engine.WEIGHTS[key]
+        fig.add_trace(go.Bar(
+            x=[points], y=["score"], orientation="h",
+            name=FACTOR_LABELS[key],
+            marker=dict(color=FACTOR_COLOURS[key],
+                        line=dict(width=1, color="#ffffff")),
+            text=[f"{points:.0f}" if points >= 6 else ""],
+            textposition="inside", insidetextanchor="middle",
+            textfont=dict(size=11, color="#ffffff"),
+            hovertemplate=(f"<b>{FACTOR_LABELS[key]}</b><br>"
+                           f"raw {raw:.2f} x weight {weight:.2f}"
+                           f" = {points:.2f} points<extra></extra>"),
+        ))
+    # The points not earned, so the bar always reads out of 100.
+    lost = 100.0 - float(row["score"])
+    if lost > 0.01:
+        fig.add_trace(go.Bar(
+            x=[lost], y=["score"], orientation="h", name="not earned",
+            marker=dict(color="#e8ebef", line=dict(width=1, color="#ffffff")),
+            hovertemplate=f"Not earned: {lost:.1f} points<extra></extra>",
+        ))
+    fig.update_layout(
+        barmode="stack", height=190, margin=dict(l=0, r=0, t=6, b=70),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=CHART_FONT,
+        xaxis=dict(range=[0, 100], showgrid=False, zeroline=False,
+                   title="score out of 100"),
+        yaxis=dict(showticklabels=False, showgrid=False),
+        legend=dict(orientation="h", yanchor="top", y=-0.75, x=0,
+                    font=dict(size=10)),
+        hoverlabel=HOVER_STYLE,
+    )
+    return fig
+
+
+def money_waterfall(row) -> go.Figure:
+    """Material value, plus disposal avoided, less freight and processing."""
+    values = [float(row["material_value"]), float(row["disposal_saved"]),
+              -float(row["transport_cost"]), -float(row["processing_cost"])]
+    net = float(row["net_value"])
+    fig = go.Figure(go.Waterfall(
+        orientation="v",
+        measure=["relative", "relative", "relative", "relative", "total"],
+        x=["Material<br>displaced", "Disposal<br>avoided", "Transport",
+           "Processing", "Net"],
+        y=values + [net],
+        text=[engine.inr(v) for v in values] + [engine.inr(net)],
+        textposition="outside", textfont=dict(size=10),
+        connector=dict(line=dict(color="#b9c0cc", width=1)),
+        increasing=dict(marker=dict(color=ui.STATUS_GOOD)),
+        decreasing=dict(marker=dict(color=ui.STATUS_BAD)),
+        totals=dict(marker=dict(color=ui.ACCENT if net >= 0 else ui.STATUS_BAD)),
+        hoverinfo="x+y",
+    ))
+    # A loss has to be visible as a bar below the axis, not just a red number.
+    low = min(0.0, net, min(values)) * 1.25
+    high = max(values + [net]) * 1.3
+    fig.update_layout(
+        height=330, margin=dict(l=0, r=0, t=22, b=10),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#ffffff", font=CHART_FONT,
+        yaxis=dict(title="Rs per year", gridcolor="#e4e7ec", zeroline=True,
+                   zerolinecolor="#1a1f2b", zerolinewidth=1,
+                   range=[low, high]),
+        xaxis=dict(showgrid=False, tickangle=0, tickfont=dict(size=10)),
+        showlegend=False, hoverlabel=HOVER_STYLE,
+    )
+    return fig
+
+
+def stream_short(name: str) -> str:
+    """"Fly ash (Talcher TPS)" -> "Talcher TPS".
+
+    Two streams of the same material differ only by the plant, so the plant is
+    what a chip has to show - splitting on the material name makes both read
+    identically.
+    """
+    if "(" in name and name.rstrip().endswith(")"):
+        return name[name.index("(") + 1:name.rindex(")")]
+    return name
+
+
+def match_chips(row) -> str:
+    """The operational facts of an exchange, as tags rather than a paragraph."""
+    processing = str(row["processing"])
+    chips = [
+        ui.chip(f'{row["road_km"]:,.0f} km by {row["transport_mode"]}', "accent"),
+        ui.chip(f'{engine.tonnes(row["matched_tpa"])}/yr'),
+        ui.chip(f'{row["supplier_share"] * 100:.0f}% of supplier output'),
+        ui.chip(f'{row["max_share"] * 100:.0f}% max of receiver input'),
+        ui.chip(f'{processing} processing',
+                "good" if processing == "none" else
+                ("warn" if processing in ("simple", "moderate") else "bad")),
+        ui.chip(f'{row["supplier_availability"]}',
+                "good" if float(row["f_timing"]) >= 0.999 else "warn"),
+    ]
+    if str(row["hazard"]) == "regulated":
+        chips.append(ui.chip(
+            "regulated" + (" - receiver authorised" if row["receiver_authorised"]
+                           else " - receiver NOT authorised"),
+            "warn" if row["receiver_authorised"] else "bad"))
+    if bool(row["beyond_max_km"]):
+        chips.append(ui.chip(f'past the {row["max_km"]:,.0f} km limit', "bad"))
+    if float(row["net_value"]) < 0:
+        chips.append(ui.chip("loses money", "bad"))
+    return ui.chip_row(chips)
+
+
+
+def flow_sankey(view: pd.DataFrame, max_flows: int = 18) -> go.Figure:
+    """By-product streams, through applications, to the virgin material displaced.
+
+    The classic industrial-ecology picture: it makes the whole system legible in
+    one image in a way a ranked table never does. Link thickness is tonnes a
+    year, taken from the allocation so the same tonne is not drawn twice.
+    """
+    if view is None or len(view) == 0:
+        return None
+    top = view.nlargest(min(max_flows, len(view)), "allocated_tpa")
+    top = top[top["allocated_tpa"] > 0]
+    if top.empty:
+        top = view.nlargest(min(max_flows, len(view)), "matched_tpa")
+        column = "matched_tpa"
+    else:
+        column = "allocated_tpa"
+
+    materials_in = sorted(top["material"].unique())
+    applications = sorted(top["application"].unique())
+    replaced = sorted(top["replaces"].unique())
+    labels = materials_in + applications + replaced
+    index = {name: i for i, name in enumerate(labels)}
+    offset_app = len(materials_in)
+    offset_rep = offset_app + len(applications)
+
+    sources, targets, values, hovers = [], [], [], []
+    for row in top.itertuples(index=False):
+        tonnes = float(getattr(row, column))
+        sources.append(index[row.material])
+        targets.append(offset_app + applications.index(row.application))
+        values.append(tonnes)
+        hovers.append(f"{row.material} to {row.application}<br>"
+                      f"{engine.tonnes(tonnes)}/yr")
+        sources.append(offset_app + applications.index(row.application))
+        targets.append(offset_rep + replaced.index(row.replaces))
+        values.append(tonnes)
+        hovers.append(f"{row.application} displaces {row.replaces}<br>"
+                      f"{engine.tonnes(tonnes)}/yr")
+
+    node_colours = ([ui.ACCENT] * len(materials_in)
+                    + ["#5f93cb"] * len(applications)
+                    + [ui.STATUS_GOOD] * len(replaced))
+    fig = go.Figure(go.Sankey(
+        arrangement="snap",
+        node=dict(label=labels, pad=13, thickness=14,
+                  color=node_colours,
+                  line=dict(color="#ffffff", width=1),
+                  hovertemplate="%{label}<br>%{value:,.0f} t/yr<extra></extra>"),
+        link=dict(source=sources, target=targets, value=values,
+                  color="rgba(31,95,169,0.22)",
+                  customdata=hovers,
+                  hovertemplate="%{customdata}<extra></extra>"),
+    ))
+    fig.update_layout(
+        # Capped: past this the diagram scrolls off the screen and stops being
+        # the one-image summary it exists to be.
+        height=min(560, max(380, 24 * len(labels))),
+        margin=dict(l=4, r=4, t=26, b=4),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#1a1f2b", size=11, family="Noto Sans, Arial, sans-serif"),
+        hoverlabel=HOVER_STYLE,
+    )
+    return fig
+
+
+
+# ======================================================================
+# Chrome: utility bar, masthead, sidebar navigation
+# ======================================================================
+
+# Short labels. The old tab strip overflowed into a horizontal scroll once the
+# materials layer was added, which reads as unfinished; a vertical nav carries
+# ten sections without any of them hiding.
+SECTIONS = [
+    ("grading", "Grading"),
+    ("cascade", "Value cascade"),
+    ("blend", "Blending"),
+    ("carbon", "Carbon & CCTS"),
+    ("mine", "My plant"),
+    ("network", "Network"),
+    ("matches", "Matches"),
+    ("chains", "Chains"),
+    ("gaps", "Gaps"),
+    ("method", "Method"),
+]
+SECTION_KEYS = [key for key, _ in SECTIONS]
+SECTION_LABELS = dict(SECTIONS)
 
 ui.utility_bar()
 ui.masthead()
 
 with st.sidebar:
+    st.markdown('<p class="navtitle">Sections</p>', unsafe_allow_html=True)
+    section = st.radio(
+        "Section", SECTION_KEYS, format_func=lambda k: SECTION_LABELS[k],
+        label_visibility="collapsed", key="nav_section",
+    )
+    st.markdown("---")
     st.markdown(f"### {ui.tr('sb_registry')}")
     source = st.radio("Source", [ui.tr("sb_sample"), ui.tr("sb_upload")],
                       label_visibility="collapsed")
@@ -394,21 +743,29 @@ if facilities.empty:
     st.stop()
 
 unmatched_tonnes = float(gaps["output_tpa"].sum()) if len(gaps) else 0.0
+placed_share = (100.0 * summary["tonnes_diverted"]
+                / max(1.0, impact["total_byproduct_t"]))
+viable_share = (100.0 * (summary["exchanges"] - summary["loss_making"])
+                / max(1, summary["exchanges"]))
 ui.stat_row([
     ui.stat_block(ui.tr("kpi_exchanges"), f"{summary['exchanges']:,}",
-                  f"{summary['suppliers']} {ui.tr('suppliers_receivers')} &middot; "
-                  f"{summary['receivers']} {ui.tr('receivers')}"),
+                  meter=viable_share,
+                  meter_label=f"{summary['loss_making']} {ui.tr('at_a_loss')}",
+                  meter_tone="bad" if summary["loss_making"] else "good"),
     ui.stat_block(ui.tr("kpi_tonnes"), engine.tonnes(summary["tonnes_diverted"]),
-                  ui.tr("per_year")),
+                  meter=placed_share,
+                  meter_label=f"of {engine.tonnes(impact['total_byproduct_t'])} produced"),
     ui.stat_block(ui.tr("kpi_co2"), engine.tonnes(summary["co2_avoided_t"]),
-                  ui.tr("per_year")),
+                  sub=ui.tr("per_year")),
     ui.stat_block(ui.tr("kpi_value"), engine.inr(summary["value_unlocked"]),
-                  f"{summary['loss_making']} {ui.tr('at_a_loss')}",
-                  bad=summary["loss_making"] > 0),
+                  sub=ui.tr("per_year")),
     ui.stat_block(ui.tr("kpi_unmatched"), engine.tonnes(unmatched_tonnes),
-                  f"{len(gaps)} {ui.tr('streams_unplaced')}"),
+                  meter=100.0 - placed_share,
+                  meter_label=f"{len(gaps)} {ui.tr('streams_unplaced')}",
+                  meter_tone="bad"),
     ui.stat_block(ui.tr("kpi_circularity"), f"{impact['circularity_pct']:.1f}%",
-                  f"{ui.tr('of_produced')} {engine.tonnes(impact['total_byproduct_t'])}"),
+                  meter=impact["circularity_pct"],
+                  meter_label=ui.tr("of_produced")),
 ], columns=6)
 
 st.markdown(
@@ -419,12 +776,11 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-(tab_grading, tab_blend, tab_carbon, tab_mine, tab_network, tab_matches,
- tab_chains, tab_gaps, tab_method) = st.tabs([
-    ui.tr("tab_grading"), ui.tr("tab_blend"), ui.tr("tab_carbon"),
-    ui.tr("tab_mine"), ui.tr("tab_network"), ui.tr("tab_matches"),
-    ui.tr("tab_chains"), ui.tr("tab_gaps"), ui.tr("tab_method"),
-])
+st.markdown(
+    f'<div class="breadcrumb">{ui.tr("home")} &rsaquo; '
+    f'<b>{SECTION_LABELS[section]}</b></div>',
+    unsafe_allow_html=True,
+)
 
 QUALIFY_COLOUR = ui.SUPPLIER_COLOUR       # navy - qualifies
 BLOCKED_COLOUR = "#b9c0cc"                # grey - does not
@@ -474,255 +830,185 @@ def limit_table(report: dict) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-with tab_grading:
-    ui.breadcrumb("tab_grading")
-    st.markdown(f'<div class="sect">{ui.tr("mg_heading")}</div>',
-                unsafe_allow_html=True)
-    st.markdown(
-        '<p class="sub">The rest of this portal matches material <em>names</em>. '
-        'This grades a stream on what it is actually made of. Every by-product is '
-        'a vector of measured properties; every application is a written '
-        'specification with numeric limits. A verdict is the arithmetic between '
-        'them, and a failure always names the property, the limit, the measured '
-        'value and the size of the gap.</p>',
-        unsafe_allow_html=True,
-    )
-
+if section == "grading":
     stream = st.selectbox(ui.tr("mg_pick"), materials.materials(), index=1,
-                          key="grade_material")
+                          key="grade_material", label_visibility="collapsed")
     profile = materials.properties_of(stream) or {}
     measured = materials.measured_properties(stream)
     ladder = conformance.cascade(stream)
 
-    ui.stat_row([
-        ui.stat_block(ui.tr("mg_qualifies"),
-                      f'{len(ladder["qualifying"])} / {len(ladder["rungs"])}',
-                      "applications in the library"),
-        ui.stat_block(ui.tr("mg_best"),
-                      engine.inr(ladder["best_qualifying_value"]) + " /t",
-                      (ladder["best_qualifying"]["spec"][:46]
-                       if ladder["best_qualifying"] else "nothing in the library")),
-        ui.stat_block(ui.tr("mg_discount"),
-                      engine.inr(ladder["quality_discount"]) + " /t",
-                      f'below {ladder["library_best"][:40]}', bad=True),
-        ui.stat_block("Annual tonnage",
-                      engine.tonnes(profile.get("annual_tpa", 0)),
-                      f'disposal Rs {profile.get("disposal_inr_t", 0):,.0f}/t'),
-    ], columns=4)
+    spec_names = [r["spec"] for r in ladder["rungs"]]
+    # Open on the most valuable rung the stream actually reaches. Opening on one
+    # it misses makes an edge case look like the headline.
+    default_spec = (ladder["best_qualifying"]["spec"]
+                    if ladder["best_qualifying"] else spec_names[-1])
+    picked_spec = st.selectbox(ui.tr("mg_detail"), spec_names,
+                               index=spec_names.index(default_spec),
+                               key="grade_spec", label_visibility="collapsed")
+    report = conformance.grade(stream, picked_spec)
 
-    if profile.get("note"):
-        st.markdown(f'<div class="note">{profile["note"]}</div>',
-                    unsafe_allow_html=True)
-
-    st.markdown(f'<div class="sect">{ui.tr("mg_ladder")}</div>',
-                unsafe_allow_html=True)
+    marginal = report["passes"] and report["grade"] == "B"
     st.markdown(
-        '<p class="sub">Every application in the library, by what it pays. Solid '
-        'bars are the rungs this stream qualifies for today; grey bars are the '
-        'ones it does not reach. The gap between the highest solid bar and the '
-        'top of the chart is the quality discount - what the stream gives up by '
-        'being what it is.</p>',
+        ui.grade_badge(
+            report["grade"], picked_spec,
+            f'{report["standard"]} &middot; basis: {report["confidence"]} '
+            f'&middot; worth {engine.inr(report["value_inr_t"])}/t if it qualifies',
+            "MEETS THIS SPECIFICATION" if report["passes"]
+            else f'FAILS {len(report["failures"])} LIMIT(S)',
+            report["passes"], marginal),
         unsafe_allow_html=True,
     )
-    rungs = list(reversed(ladder["rungs"]))
-    ladder_fig = go.Figure(go.Bar(
-        x=[r["value_inr_t"] for r in rungs],
-        y=[r["spec"] for r in rungs],
-        orientation="h",
-        marker=dict(color=[QUALIFY_COLOUR if r["passes"] else BLOCKED_COLOUR
-                           for r in rungs], line=dict(width=0)),
-        text=[f'{engine.inr(r["value_inr_t"])}  {"qualifies" if r["passes"] else "grade " + r["grade"]}'
-              for r in rungs],
-        textposition="outside",
-        textfont=dict(size=10),
-        hoverinfo="text",
-        hovertext=[
-            f'<b>{r["spec"]}</b><br>{engine.inr(r["value_inr_t"])}/t'
-            f'<br>{"Qualifies" if r["passes"] else "Does not qualify"} - grade {r["grade"]}'
-            + (f'<br>Binding: {r["binding"]["property"]} '
-               f'({r["binding"]["headroom_frac"] * 100:+.0f}% headroom)'
-               if r["binding"] else "")
-            for r in rungs],
-    ))
-    ladder_fig.update_layout(
-        height=30 * len(rungs) + 90, margin=dict(l=0, r=90, t=6, b=0),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#ffffff", font=CHART_FONT,
-        xaxis=dict(title="value of the application, Rs per tonne",
-                   gridcolor="#e4e7ec", zeroline=False,
-                   range=[0, max(r["value_inr_t"] for r in rungs) * 1.32]),
-        yaxis=dict(gridcolor="rgba(0,0,0,0)", automargin=True),
-        hoverlabel=HOVER_STYLE, showlegend=False, bargap=0.25,
-    )
-    st.plotly_chart(ladder_fig, width="stretch", config={"displaylogo": False})
 
-    if ladder["nearest_upgrade"]:
-        upgrade = ladder["nearest_upgrade"]
-        blockers = [f for f in upgrade["failures"] if f["measured"]]
-        if blockers:
-            worst = max(blockers, key=lambda f: abs(f["headroom_frac"]))
-            st.markdown(
-                f'<div class="note"><strong>{ui.tr("mg_upgrade")}:</strong> '
-                f'{upgrade["spec"]} at {engine.inr(upgrade["value_inr_t"])}/t. '
-                f'It is held back by '
-                f'{materials.PROPERTY_LABELS.get(worst["property"], worst["property"])} - '
-                f'the limit is {worst["operator"]} {worst["threshold"]:g} and this stream '
-                f'measures {worst["actual"]:g}, {abs(worst["headroom_frac"]) * 100:.0f}% '
-                f'outside. Closing that one gap is worth '
-                f'{engine.inr(upgrade["value_inr_t"] - ladder["best_qualifying_value"])} '
-                f'a tonne. Try the {ui.tr("tab_blend")} tab.</div>',
-                unsafe_allow_html=True,
-            )
+    binding = report["binding"]
+    chips = [
+        ui.chip(f'{len(ladder["qualifying"])} of {len(ladder["rungs"])} uses',
+                "accent"),
+        ui.chip(f'best {engine.inr(ladder["best_qualifying_value"])}/t', "accent"),
+        ui.chip(f'{engine.tonnes(profile.get("annual_tpa", 0))}/yr'),
+        ui.chip(f'disposal Rs {profile.get("disposal_inr_t", 0):,.0f}/t'),
+    ]
+    if binding:
+        tone = "good" if binding["headroom_frac"] >= 0.15 else (
+            "warn" if binding["headroom_frac"] >= 0 else "bad")
+        chips.append(ui.chip(
+            f'binding: {materials.PROPERTY_LABELS.get(binding["property"], binding["property"])} '
+            f'{binding["headroom_frac"] * 100:+.0f}%', tone))
+    st.markdown(ui.chip_row(chips), unsafe_allow_html=True)
 
-    left, right = st.columns([1, 2.1], gap="medium")
+    left, right = st.columns([1.25, 1], gap="medium")
 
     with left:
-        st.markdown(f'<div class="sect">{ui.tr("mg_composition")}</div>',
-                    unsafe_allow_html=True)
-        composition = pd.DataFrame([{
-            "property": materials.PROPERTY_LABELS.get(k, k),
-            "value": v,
-            "unit": materials.unit_for(k),
-        } for k, v in measured.items()])
+        fig = bullet_chart(report)
+        if fig is not None:
+            st.plotly_chart(fig, width="stretch", config={"displaylogo": False})
+        unmeasured = [r for r in report["results"] if not r["measured"]]
+        if unmeasured:
+            st.markdown(ui.chip_row([
+                ui.chip(f'not measured: '
+                        f'{materials.PROPERTY_LABELS.get(r["property"], r["property"])}',
+                        "bad") for r in unmeasured]), unsafe_allow_html=True)
+        for ratio in report["ratios"]:
+            tone = "good" if ratio["passes"] else "bad"
+            actual = f'{ratio["actual"]:.2f}' if ratio["actual"] is not None else "n/a"
+            st.markdown(ui.chip_row([ui.chip(
+                f'{ratio["expression"]} = {actual} (needs &gt; {ratio["threshold"]:g})',
+                tone)]), unsafe_allow_html=True)
+
+    with right:
+        st.plotly_chart(composition_bar(measured), width="stretch",
+                        config={"displaylogo": False})
+        st.markdown(ui.card_grid([
+            ui.spec_card(r["spec"], r["passes"], r["grade"],
+                         engine.inr(r["value_inr_t"]),
+                         marginal=r["passes"] and r["grade"] == "B")
+            for r in ladder["rungs"][:8]
+        ]), unsafe_allow_html=True)
+
+    with st.expander("Full assessment, limit by limit", expanded=False):
         st.dataframe(
-            composition, hide_index=True, width="stretch", height=430,
+            limit_table(report), hide_index=True, width="stretch",
             column_config={
                 "property": st.column_config.TextColumn("Property", width="medium"),
-                "value": st.column_config.NumberColumn("Value", format="%.3g"),
-                "unit": st.column_config.TextColumn("Unit", width="small"),
+                "required": st.column_config.TextColumn("Required", width="small"),
+                "actual": st.column_config.NumberColumn("Measured", format="%.4g",
+                                                        width="small"),
+                "margin": st.column_config.NumberColumn("Margin", format="%.4g",
+                                                        width="small"),
+                "headroom %": st.column_config.NumberColumn("Headroom %",
+                                                            format="%.1f",
+                                                            width="small"),
+                "verdict": st.column_config.TextColumn("Verdict", width="small"),
+                "basis": st.column_config.TextColumn("Basis of the limit",
+                                                     width="large"),
             },
         )
         st.markdown(
+            f'<p class="caveat">{report["note"]}</p>'
+            f'<p class="caveat">{profile.get("note", "")}</p>'
             '<p class="caveat">Representative composition for a stream of this '
             'type, not an assay of a specific consignment. A real trade needs a '
             'laboratory certificate for the actual material.</p>',
             unsafe_allow_html=True,
         )
 
-    with right:
-        st.markdown(f'<div class="sect">{ui.tr("mg_against")}</div>',
-                    unsafe_allow_html=True)
-        spec_summary = pd.DataFrame([{
-            "application": r["spec"],
-            "verdict": "PASS" if r["passes"] else "FAIL",
-            "grade": r["grade"],
-            "value_inr_t": r["value_inr_t"],
-            "binding property": (materials.PROPERTY_LABELS.get(
-                r["binding"]["property"], r["binding"]["property"])
-                if r["binding"] else "-"),
-            "headroom %": (r["binding"]["headroom_frac"] * 100
-                           if r["binding"] and r["binding"]["headroom_frac"] is not None
-                           else None),
-            "standard": r["standard"],
-            "basis": r["confidence"],
-        } for r in ladder["rungs"]])
-        st.dataframe(
-            spec_summary, hide_index=True, width="stretch", height=430,
-            column_config={
-                "application": st.column_config.TextColumn("Application",
-                                                           width="large"),
-                "verdict": st.column_config.TextColumn("Verdict", width="small"),
-                "grade": st.column_config.TextColumn("Grade", width="small"),
-                "value_inr_t": st.column_config.NumberColumn("Rs/t", format="%.0f",
-                                                             width="small"),
-                "binding property": st.column_config.TextColumn("Binding property",
-                                                                width="medium"),
-                "headroom %": st.column_config.NumberColumn("Headroom %",
-                                                            format="%.1f",
-                                                            width="small"),
-                "standard": st.column_config.TextColumn("Standard", width="medium"),
-                "basis": st.column_config.TextColumn("Basis", width="small"),
-            },
-        )
-        st.markdown(
-            '<p class="caveat">Grades: '
-            + " &middot; ".join(f"<strong>{k}</strong> {v}"
-                                for k, v in GRADE_MEANING.items())
-            + '. "Basis" is <strong>standard</strong> where the limit is taken '
-            'from the named standard, and <strong>indicative</strong> where no '
-            'single published number exists and the threshold reflects common '
-            'practice - never presented as if it were a code requirement.</p>',
-            unsafe_allow_html=True,
-        )
 
-    st.markdown("---")
-    spec_names = [r["spec"] for r in ladder["rungs"]]
-    default_spec = (ladder["nearest_upgrade"]["spec"]
-                    if ladder["nearest_upgrade"] else spec_names[0])
-    picked_spec = st.selectbox(ui.tr("mg_detail"), spec_names,
-                               index=spec_names.index(default_spec),
-                               key="grade_spec")
-    report = conformance.grade(stream, picked_spec)
+# ======================================================================
+# 0a. Value cascade
+# ======================================================================
 
-    verdict_class = "" if report["passes"] else " loss"
-    if report["passes"]:
-        headline = (f'<strong>{stream}</strong> meets <strong>{picked_spec}</strong> '
-                    f'at grade {report["grade"]} - '
-                    f'{GRADE_MEANING[report["grade"]]}.')
-    else:
-        worst = report["failures"][0] if report["failures"] else None
-        if worst and worst["measured"]:
-            headline = (
-                f'<strong>{stream}</strong> does not meet '
-                f'<strong>{picked_spec}</strong>. It fails on '
-                f'{materials.PROPERTY_LABELS.get(worst["property"], worst["property"])}: '
-                f'the limit is {worst["operator"]} {worst["threshold"]:g} and this '
-                f'stream measures {worst["actual"]:g}, a shortfall of '
-                f'{abs(worst["margin"]):.3g} '
-                f'({abs(worst["headroom_frac"]) * 100:.0f}% of the limit).'
-            )
-            if len(report["failures"]) > 1:
-                headline += f' {len(report["failures"]) - 1} further limit(s) also fail.'
-        else:
-            headline = (f'<strong>{stream}</strong> cannot be assessed against '
-                        f'<strong>{picked_spec}</strong>: a required property is '
-                        'not measured for this stream.')
-    st.markdown(f'<div class="note{verdict_class}">{headline}</div>',
-                unsafe_allow_html=True)
+if section == "cascade":
+    stream = st.selectbox(ui.tr("mg_pick"), materials.materials(), index=1,
+                          key="cascade_material", label_visibility="collapsed")
+    ladder = conformance.cascade(stream)
+    best = ladder["best_qualifying"]
 
-    st.dataframe(
-        limit_table(report), hide_index=True, width="stretch",
-        column_config={
-            "property": st.column_config.TextColumn("Property", width="medium"),
-            "required": st.column_config.TextColumn("Required", width="small"),
-            "actual": st.column_config.NumberColumn("Measured", format="%.4g",
-                                                    width="small"),
-            "margin": st.column_config.NumberColumn("Margin", format="%.4g",
-                                                    width="small"),
-            "headroom %": st.column_config.NumberColumn("Headroom %", format="%.1f",
-                                                        width="small"),
-            "verdict": st.column_config.TextColumn("Verdict", width="small"),
-            "basis": st.column_config.TextColumn("Basis of the limit", width="large"),
-        },
+    ui.stat_row([
+        ui.stat_block(ui.tr("mg_discount"),
+                      engine.inr(ladder["quality_discount"]) + " /t",
+                      f'below {ladder["library_best"][:38]}', bad=True),
+        ui.stat_block(ui.tr("mg_best"),
+                      engine.inr(ladder["best_qualifying_value"]) + " /t",
+                      best["spec"][:40] if best else "nothing in the library"),
+        ui.stat_block(ui.tr("mg_qualifies"),
+                      f'{len(ladder["qualifying"])} / {len(ladder["rungs"])}', ""),
+    ], columns=3)
+
+    rungs = list(reversed(ladder["rungs"]))
+    current = best["spec"] if best else None
+    ladder_fig = go.Figure(go.Bar(
+        x=[r["value_inr_t"] for r in rungs],
+        y=[r["spec"] for r in rungs],
+        orientation="h",
+        marker=dict(
+            color=[ui.ACCENT if r["passes"] else ui.NEUTRAL_GREY for r in rungs],
+            line=dict(width=0)),
+        text=[(f'{engine.inr(r["value_inr_t"])}  &#10003;'
+               + ("  &#9664; goes here today" if r["spec"] == current else ""))
+              if r["passes"] else
+              f'{engine.inr(r["value_inr_t"])}  &#128274; grade {r["grade"]}'
+              for r in rungs],
+        textposition="outside", textfont=dict(size=10),
+        hoverinfo="text",
+        hovertext=[
+            f'<b>{r["spec"]}</b><br>{engine.inr(r["value_inr_t"])}/t'
+            f'<br>{"Qualifies" if r["passes"] else "Locked - grade " + r["grade"]}'
+            + (f'<br>Binding: {r["binding"]["property"]} '
+               f'({r["binding"]["headroom_frac"] * 100:+.0f}%)'
+               if r["binding"] else "")
+            for r in rungs],
+    ))
+    ladder_fig.update_layout(
+        height=34 * len(rungs) + 80, margin=dict(l=0, r=190, t=6, b=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#ffffff", font=CHART_FONT,
+        xaxis=dict(title="Rs per tonne of the application", gridcolor="#e4e7ec",
+                   zeroline=False,
+                   range=[0, max(r["value_inr_t"] for r in rungs) * 1.55]),
+        yaxis=dict(gridcolor="rgba(0,0,0,0)", automargin=True),
+        hoverlabel=HOVER_STYLE, showlegend=False, bargap=0.3,
     )
-    st.markdown(
-        f'<p class="caveat"><strong>{report["standard"]}</strong> &middot; '
-        f'basis: {report["confidence"]} &middot; value if it qualifies: '
-        f'{engine.inr(report["value_inr_t"])}/t. Margin is in the property\'s own '
-        'units; a positive margin is inside the limit. '
-        f'{report["note"]}</p>',
-        unsafe_allow_html=True,
-    )
+    st.plotly_chart(ladder_fig, width="stretch", config={"displaylogo": False})
+
+    upgrade = ladder["nearest_upgrade"]
+    if upgrade:
+        blockers = [f for f in upgrade["failures"] if f["measured"]]
+        if blockers:
+            worst = max(blockers, key=lambda f: abs(f["headroom_frac"]))
+            st.markdown(ui.chip_row([
+                ui.chip(f'next rung: {upgrade["spec"][:44]}', "accent"),
+                ui.chip(f'{engine.inr(upgrade["value_inr_t"])}/t', "accent"),
+                ui.chip(f'blocked by '
+                        f'{materials.PROPERTY_LABELS.get(worst["property"], worst["property"])} '
+                        f'{abs(worst["headroom_frac"]) * 100:.0f}% outside', "bad"),
+                ui.chip(f'worth +{engine.inr(upgrade["value_inr_t"] - ladder["best_qualifying_value"])}/t',
+                        "good"),
+            ]), unsafe_allow_html=True)
 
 
 # ======================================================================
 # 0b. Blend to specification
 # ======================================================================
 
-with tab_blend:
-    ui.breadcrumb("tab_blend")
-    st.markdown(f'<div class="sect">{ui.tr("bl_heading")}</div>',
-                unsafe_allow_html=True)
-    st.markdown(
-        '<p class="sub">Every property modelled here mixes linearly by mass, so '
-        'each limit becomes a linear inequality in the blend ratio and can be '
-        'solved exactly. Intersecting all of them gives the range of ratios that '
-        'satisfies the whole specification - or the pair of limits that pull in '
-        'opposite directions and make it impossible. This is value created by '
-        'chemistry rather than by trucking: a stream that fails on its own can '
-        'clear the specification blended, and nothing has to be built.</p>',
-        unsafe_allow_html=True,
-    )
-
+if section == "blend":
     stream_names = materials.materials()
     b1, b2, b3 = st.columns(3)
     blend_a = b1.selectbox(ui.tr("bl_stream_a"), stream_names,
@@ -737,140 +1023,126 @@ with tab_blend:
                           key="blend_spec")
 
     result = blending.blend_to_spec(blend_a, blend_b, target)
-    alone_a = conformance.grade(blend_a, target)
-    alone_b = conformance.grade(blend_b, target)
+    props_a = materials.measured_properties(blend_a)
+    props_b = materials.measured_properties(blend_b)
 
-    if not result["feasible"]:
-        st.markdown(
-            f'<div class="note loss"><strong>No blend of these two streams meets '
-            f'{target}.</strong> {result["reason"]}</div>',
-            unsafe_allow_html=True,
+    if not props_a or not props_b or blend_a == blend_b:
+        st.markdown(ui.chip_row([ui.chip(result["reason"] or
+                                         "Pick two different streams", "bad")]),
+                    unsafe_allow_html=True)
+    else:
+        # The slider is the whole screen: drag it and the bars move across the
+        # limit line. The engine's recommendation is the starting position.
+        default_f = int(round((result["f_recommended"]
+                               if result["feasible"] else 0.5) * 100))
+        mix = st.slider(
+            f"Mass fraction of {blend_a}", 0, 100, default_f, 1,
+            format="%d%%", key="blend_fraction",
+            help="Drag to change the mix. Every bar below is redrawn against its "
+                 "limit as you move it.",
         )
-        if result["blocking"]:
+        f = mix / 100.0
+        blended = blending.blend_properties(props_a, props_b, f)
+        live = conformance.grade_properties(blended, target,
+                                            material_label="blend")
+
+        if result["feasible"]:
+            window = (f'feasible {result["f_min"]:.0%} to {result["f_max"]:.0%}')
+            window_tone = "accent"
+        else:
+            blocked = result["blocking"][0] if result["blocking"] else None
+            window = ("no feasible blend"
+                      + (f' - {materials.PROPERTY_LABELS.get(blocked["property"], blocked["property"])} '
+                         "cannot be met" if blocked else ""))
+            window_tone = "bad"
+
+        verdict = (f'{ui.GLYPH_PASS} PASSES at {f:.0%} {stream_short(blend_a)}'
+                   if live["passes"] else
+                   f'{ui.GLYPH_FAIL} FAILS at {f:.0%} - '
+                   f'{len(live["failures"])} limit(s) outside')
+        st.markdown(ui.chip_row([
+            ui.chip(verdict, "good" if live["passes"] else "bad"),
+            ui.chip(f'grade {live["grade"]}', "good" if live["passes"] else "bad"),
+            ui.chip(window, window_tone),
+            ui.chip(f'{engine.inr(live["value_inr_t"])}/t if it qualifies', "accent"),
+            ui.chip(f'{live["standard"]}'),
+        ]), unsafe_allow_html=True)
+
+        fig = bullet_chart(live)
+        if fig is not None:
+            st.plotly_chart(fig, width="stretch", config={"displaylogo": False})
+
+        alone_a = conformance.grade(blend_a, target)
+        alone_b = conformance.grade(blend_b, target)
+        st.markdown(ui.chip_row([
+            ui.chip(f'{stream_short(blend_a)} alone: '
+                    f'{ui.GLYPH_PASS if alone_a["passes"] else ui.GLYPH_FAIL} '
+                    f'{alone_a["grade"]}',
+                    "good" if alone_a["passes"] else "bad"),
+            ui.chip(f'{stream_short(blend_b)} alone: '
+                    f'{ui.GLYPH_PASS if alone_b["passes"] else ui.GLYPH_FAIL} '
+                    f'{alone_b["grade"]}',
+                    "good" if alone_b["passes"] else "bad"),
+            ui.chip(f'blend at {f:.0%}: '
+                    f'{ui.GLYPH_PASS if live["passes"] else ui.GLYPH_FAIL} '
+                    f'{live["grade"]}',
+                    "good" if live["passes"] else "bad"),
+        ]), unsafe_allow_html=True)
+
+        with st.expander("Per-limit feasible range, and what each stream brings",
+                         expanded=False):
+            rows = []
+            for interval, check in zip(result["intervals"], live["results"]):
+                rows.append({
+                    "property": " + ".join(
+                        materials.PROPERTY_LABELS.get(part.strip(), part.strip())
+                        for part in interval["property"].split("+")),
+                    "required": f'{interval["operator"]} {interval["threshold"]:g}',
+                    blend_a[:22]: interval["value_a"],
+                    blend_b[:22]: interval["value_b"],
+                    "blend now": check["actual"],
+                    "allows f from": (interval["lo"] if interval["feasible"] else None),
+                    "to": (interval["hi"] if interval["feasible"] else None),
+                    "verdict": "PASS" if check["passes"] else "FAIL",
+                })
             st.dataframe(
-                pd.DataFrame([{
-                    "property": materials.PROPERTY_LABELS.get(
-                        b["property"], b["property"]),
-                    "required": f'{b["operator"]} {b["threshold"]:g}',
-                    f"{blend_a[:22]}": b["value_a"],
-                    f"{blend_b[:22]}": b["value_b"],
-                    "why": (b["reason"] or
-                            f'satisfied only for blend ratios '
-                            f'{b["lo"]:.0%} to {b["hi"]:.0%}'),
-                } for b in result["blocking"]]),
-                hide_index=True, width="stretch",
+                pd.DataFrame(rows), hide_index=True, width="stretch",
                 column_config={
                     "property": st.column_config.TextColumn("Property",
                                                             width="medium"),
                     "required": st.column_config.TextColumn("Required",
                                                             width="small"),
-                    "why": st.column_config.TextColumn("Why it cannot be met",
-                                                       width="large"),
+                    blend_a[:22]: st.column_config.NumberColumn(format="%.4g"),
+                    blend_b[:22]: st.column_config.NumberColumn(format="%.4g"),
+                    "blend now": st.column_config.NumberColumn(format="%.4g"),
+                    "allows f from": st.column_config.NumberColumn(format="%.0f%%",
+                                                                   width="small"),
+                    "to": st.column_config.NumberColumn(format="%.0f%%",
+                                                        width="small"),
+                    "verdict": st.column_config.TextColumn("Verdict", width="small"),
                 },
             )
-        st.markdown(
-            '<p class="caveat">Two limits that are each satisfiable on their own '
-            'can still be jointly impossible: one needs more of A and the other '
-            'needs less. That is what the rows above show.</p>',
-            unsafe_allow_html=True,
-        )
-    else:
-        f = result["f_recommended"]
-        report = result["report"]
-        ui.stat_row([
-            ui.stat_block(ui.tr("bl_recommended"),
-                          f'{f:.0%} / {1 - f:.0%}',
-                          f'{blend_a[:26]} / {blend_b[:26]}'),
-            ui.stat_block(ui.tr("bl_feasible"),
-                          f'{result["f_min"]:.0%} - {result["f_max"]:.0%}',
-                          f'mass fraction of {blend_a[:28]}'),
-            ui.stat_block("Blend verdict",
-                          ("PASS grade " + report["grade"]) if report["passes"]
-                          else "FAIL",
-                          target[:44]),
-            ui.stat_block("Value of the target",
-                          engine.inr(report["value_inr_t"]) + " /t",
-                          report["standard"]),
-        ], columns=4)
+            st.markdown(
+                '<p class="caveat">Linear mixing is sound for composition and '
+                'reasonable for fineness and loss on ignition. It does not predict '
+                'lime reactivity, soundness or strength activity index, which the '
+                'standards also require. A feasible blend is a candidate for a '
+                'trial mix, not a certificate.</p>',
+                unsafe_allow_html=True,
+            )
 
-        headline = (
-            f'<strong>Blend {f:.0%} {blend_a} with {1 - f:.0%} {blend_b} and the '
-            f'mix meets {target}</strong>, at grade {report["grade"]}. '
-        )
-        if not alone_a["passes"] and alone_b["passes"]:
-            headline += (f'{blend_a} cannot meet this specification on its own; '
-                         f'the blend places {f:.0%} of it anyway.')
-        elif not alone_a["passes"] and not alone_b["passes"]:
-            headline += "Neither stream meets it alone."
-        st.markdown(f'<div class="note">{headline}</div>', unsafe_allow_html=True)
-        st.markdown(
-            f'<p class="caveat">Ratio chosen by {result["rationale"]}. '
-            'Rounded inward to the nearest 1% so a dosing error cannot push the '
-            'mix outside the specification.</p>',
-            unsafe_allow_html=True,
-        )
-
-        st.markdown(f'<div class="sect">{ui.tr("bl_before_after")}</div>',
-                    unsafe_allow_html=True)
-        props_a = materials.measured_properties(blend_a)
-        props_b = materials.measured_properties(blend_b)
-        rows = []
-        for check in report["results"]:
-            expression = check["property"]
-            value_a, _ = conformance.resolve(expression, props_a)
-            value_b, _ = conformance.resolve(expression, props_b)
-            rows.append({
-                "property": " + ".join(
-                    materials.PROPERTY_LABELS.get(p.strip(), p.strip())
-                    for p in expression.split("+")),
-                "required": f'{check["operator"]} {check["threshold"]:g}',
-                blend_a[:24]: value_a,
-                blend_b[:24]: value_b,
-                "blend": check["actual"],
-                "headroom %": (check["headroom_frac"] * 100
-                               if check["headroom_frac"] is not None else None),
-                "verdict": "PASS" if check["passes"] else "FAIL",
-            })
-        st.dataframe(
-            pd.DataFrame(rows), hide_index=True, width="stretch",
-            column_config={
-                "property": st.column_config.TextColumn("Property", width="medium"),
-                "required": st.column_config.TextColumn("Required", width="small"),
-                blend_a[:24]: st.column_config.NumberColumn(format="%.4g"),
-                blend_b[:24]: st.column_config.NumberColumn(format="%.4g"),
-                "blend": st.column_config.NumberColumn("Blend", format="%.4g"),
-                "headroom %": st.column_config.NumberColumn("Headroom %",
-                                                            format="%.1f",
-                                                            width="small"),
-                "verdict": st.column_config.TextColumn("Verdict", width="small"),
-            },
-        )
-
-    st.markdown(
-        '<p class="caveat"><strong>What this does not prove.</strong> Linear '
-        'mixing is sound for composition and reasonable for fineness and loss on '
-        'ignition. It is not a substitute for the performance tests the standards '
-        'also require - lime reactivity, soundness, strength activity index - '
-        'which cannot be predicted from an assay. A feasible blend here is a '
-        'candidate for a trial mix, not a certificate.</p>',
-        unsafe_allow_html=True,
-    )
 
 # ======================================================================
 # 0c. Carbon and CCTS
 # ======================================================================
 
-with tab_carbon:
-    ui.breadcrumb("tab_carbon")
+if section == "carbon":
     st.markdown(f'<div class="sect">{ui.tr("cb_heading")}</div>',
                 unsafe_allow_html=True)
     st.markdown(
-        '<p class="sub">India\'s Carbon Credit Trading Scheme sets '
-        '<strong>intensity</strong> targets - tCO2e per tonne of product - not '
-        'absolute caps. Raising the supplementary cementitious share lowers the '
-        'clinker factor, which lowers the intensity the plant is legally measured '
-        'on. That is why a by-product is worth more than the clinker it displaces: '
-        'it also moves the plant\'s compliance position.</p>',
+        '<p class="sub">CCTS targets are intensity, not tonnage - so raising the '
+        'supplementary cementitious share moves the number the plant is legally '
+        'measured on.</p>',
         unsafe_allow_html=True,
     )
 
@@ -993,34 +1265,32 @@ with tab_carbon:
                                                                  format="%.0f"),
         },
     )
-    st.markdown(
-        f'<p class="caveat">The SCM share is raised to 35%, the ceiling IS 1489 '
-        'allows for fly ash in Portland pozzolana cement. The cheapest stream is '
-        'the one that does not meet IS 3812 - which is the whole point of reading '
-        'the quality margin and the cost in the same table. '
-        f'<strong>{carbon.SCHEME_NOTES}</strong></p>'
-        f'<p class="caveat">Intensity model: clinker factor = 1 - SCM share - '
-        f'{carbon.GYPSUM_SHARE:.0%} gypsum, at '
-        f'{carbon.CLINKER_EMISSION_FACTOR} tCO2/t clinker (about 0.53 from '
-        'limestone calcination, which no fuel switch removes, plus kiln fuel), '
-        f'plus {carbon.CEMENT_OTHER_EMISSIONS} tCO2/t for grinding power. Those '
-        'are published sector averages, not this plant\'s verified figures, and '
-        f'the target shown is illustrative. {profile.get("note", "")}</p>',
-        unsafe_allow_html=True,
-    )
+    with st.expander("Model, constants and what is assumed", expanded=False):
+        st.markdown(ui.chip_row([
+            ui.chip("SCM raised to 35%, the IS 1489 ceiling", "accent"),
+            ui.chip(f'clinker {carbon.CLINKER_EMISSION_FACTOR} tCO2/t', "accent"),
+            ui.chip(f'grinding {carbon.CEMENT_OTHER_EMISSIONS} tCO2/t', "accent"),
+            ui.chip(f'gypsum {carbon.GYPSUM_SHARE:.0%}', "accent"),
+            ui.chip("certificate price is an assumption", "warn"),
+            ui.chip("targets illustrative, not notified", "warn"),
+            ui.chip("sector averages, not verified plant data", "warn"),
+        ]), unsafe_allow_html=True)
+        st.markdown(
+            f'<p class="caveat">The cheapest stream is the one that does not meet '
+            'IS 3812, which is why cost and quality margin belong in the same '
+            f'table. {carbon.SCHEME_NOTES} {profile.get("note", "")}</p>',
+            unsafe_allow_html=True,
+        )
 
 # ======================================================================
 # 1. Find my matches
 # ======================================================================
 
-with tab_mine:
-    ui.breadcrumb("tab_mine")
+if section == "mine":
     st.markdown(f'<div class="sect">{ui.tr("mine_heading")}</div>', unsafe_allow_html=True)
     st.markdown(
-        '<p class="sub">Pick what you make or what you need, say roughly how much and '
-        'where you are, and every facility in the registry is ranked as a partner - scored '
-        'by the same five factors as everything else in this tool, so the numbers are '
-        'comparable.</p>',
+        '<p class="sub">Describe a plant and every facility in the registry is ranked '
+        'as a partner, on the same five factors as everything else here.</p>',
         unsafe_allow_html=True,
     )
 
@@ -1048,9 +1318,9 @@ with tab_mine:
                 key="my_sector_sup",
                 help="Used for the registry only - what you offer is decided by the "
                      "by-product, not by your sector.")
-            st.markdown(
-                f'<p class="caveat">Sectors that can take {material}: '
-                f'{", ".join(takers) if takers else "none recorded"}.</p>',
+            st.markdown(ui.chip_row(
+                [ui.chip(f'taken by {sector_name}', "accent") for sector_name in takers]
+                or [ui.chip("no sector recorded takes this stream", "bad")]),
                 unsafe_allow_html=True)
         else:
             sector = st.selectbox(
@@ -1131,10 +1401,7 @@ with tab_mine:
             k4.metric(ui.tr("mine_best_co2"), engine.tonnes(best["co2_avoided_t"]))
 
             st.markdown(
-                f'<div class="sect">{ui.tr("mine_ranked")} &mdash; {len(mine)}</div>'
-                '<p class="sub">Ranked by the same engine score used everywhere else: '
-                'quantity 0.30, proximity 0.28, processing 0.16, timing 0.14, compliance '
-                '0.12. Sort any column by clicking its header.</p>',
+                f'<div class="sect">{ui.tr("mine_ranked")} &mdash; {len(mine)}</div>',
                 unsafe_allow_html=True,
             )
 
@@ -1174,22 +1441,20 @@ with tab_mine:
                 ui.tr("mine_download"), data=mine.to_csv(index=False).encode("utf-8"),
                 file_name="my_symbiosis_matches.csv", mime="text/csv", width="stretch")
             chosen = mine.iloc[labels.index(picked)]
-            render_narrative(chosen)
+            render_verdict(chosen)
+            render_detail_charts(chosen)
             with st.expander(ui.tr("audit"), expanded=False):
                 render_audit(chosen)
     else:
-        st.markdown(
-            f'<p class="caveat">Fill in the fields above and press '
-            f'<strong>{ui.tr("btn_rank")}</strong>.</p>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(ui.chip_row([
+            ui.chip(f'fill in the fields, then press {ui.tr("btn_rank")}', "accent"),
+        ]), unsafe_allow_html=True)
 
 # ======================================================================
 # 2. Exchange network
 # ======================================================================
 
-with tab_network:
-    ui.breadcrumb("tab_network")
+if section == "network":
     if matches.empty:
         st.info("No exchanges clear the current threshold, so there is no network to draw.")
     else:
@@ -1339,6 +1604,18 @@ with tab_network:
             hoverlabel=HOVER_STYLE, dragmode="pan",
         )
 
+        sankey = flow_sankey(view)
+        if sankey is not None:
+            st.markdown(
+                ui.chip_row([
+                    ui.chip("by-product", "accent"),
+                    ui.chip("&rarr; application"),
+                    ui.chip("&rarr; virgin material displaced", "good"),
+                    ui.chip("thickness = tonnes a year"),
+                ]), unsafe_allow_html=True)
+            st.plotly_chart(sankey, width="stretch",
+                            config={"displaylogo": False})
+
         map_col, side_col = st.columns([2.45, 1], gap="medium")
         with map_col:
             st.plotly_chart(fig, width="stretch",
@@ -1368,24 +1645,20 @@ with tab_network:
                             format="%.0f"),
                     },
                 )
-            st.markdown(
-                f'<p class="caveat"><strong>{len(view)}</strong> flow(s) drawn. Thickness '
-                'and opacity scale with score; dotted red lines lose money. Hover any state '
-                'for its totals, drag to pan, scroll to zoom.</p>'
-                '<p class="caveat">Lines are straight-line links, not routed roads - '
-                f'scoring uses straight-line distance inflated '
-                f'{engine.ROAD_CIRCUITY_FACTOR:.2f}x. State boundaries follow the Survey of '
-                'India convention and are bundled with the app, so nothing is fetched from '
-                'the internet to draw this map.</p>',
-                unsafe_allow_html=True,
-            )
+            st.markdown(ui.chip_row([
+                ui.chip(f'{len(view)} flows drawn', "accent"),
+                ui.chip("thickness = score"),
+                ui.chip("dotted red = loses money", "bad"),
+                ui.chip("drag to pan, scroll to zoom"),
+                ui.chip(f'straight-line x {engine.ROAD_CIRCUITY_FACTOR:.2f}', "warn"),
+                ui.chip("Survey of India boundary, bundled offline"),
+            ]), unsafe_allow_html=True)
 
 # ======================================================================
 # 3. Ranked matches
 # ======================================================================
 
-with tab_matches:
-    ui.breadcrumb("tab_matches")
+if section == "matches":
     if matches.empty:
         st.info("No exchanges clear the current threshold.")
     else:
@@ -1432,9 +1705,9 @@ with tab_matches:
             m3.metric(ui.tr("net_value_yr"), engine.inr(row["net_value"]))
             m4.metric(ui.tr("co2_yr"), engine.tonnes(row["co2_avoided_t"]))
 
-            render_narrative(row)
+            render_verdict(row)
 
-        st.markdown("---")
+        render_detail_charts(row)
         with st.expander(ui.tr("audit"), expanded=False):
             render_audit(row)
 
@@ -1442,14 +1715,12 @@ with tab_matches:
 # 4. Chains and impact
 # ======================================================================
 
-with tab_chains:
-    ui.breadcrumb("tab_chains")
+if section == "chains":
     st.markdown(f'<div class="sect">{ui.tr("chains_heading")}</div>',
                 unsafe_allow_html=True)
     st.markdown(
-        '<p class="sub">Pairwise scoring says which exchanges are practical. It does not '
-        'say how to run them all together, and it cannot see an arrangement that only '
-        'makes sense through a third plant. These two passes do.</p>',
+        '<p class="sub">Pairwise scoring cannot see an arrangement that only works '
+        'through a third plant, or how to run them all at once. These two passes can.</p>',
         unsafe_allow_html=True,
     )
 
@@ -1479,15 +1750,11 @@ with tab_chains:
                       ui.tr("per_year")),
     ], columns=5)
 
-    st.markdown(
-        '<p class="caveat">Circularity is the share of by-product tonnage in this registry '
-        'that actually finds a home. The denominator is every tonne offered, including the '
-        'streams with no viable receiver, so it is deliberately hard to move. Virgin '
-        'material avoided applies each substitution ratio to the tonnage placed - it is the '
-        'quarrying, mining and growing that does not have to happen. Water footprint is not '
-        'modelled: there is no defensible per-tonne figure for most of these streams.</p>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(ui.chip_row([
+        ui.chip("denominator is every tonne offered, gaps included", "accent"),
+        ui.chip("virgin avoided = tonnage x substitution ratio", "accent"),
+        ui.chip("water footprint not modelled", "warn"),
+    ]), unsafe_allow_html=True)
 
     st.markdown(f'<div class="sect">{ui.tr("opt_vs_greedy")}</div>',
                 unsafe_allow_html=True)
@@ -1499,26 +1766,19 @@ with tab_chains:
     o3.metric("Exchanges left at zero", f"{opt_report['dropped']:,}",
               help="The optimiser is free to use none of an exchange. Anything that loses "
                    "money is dropped on its own, without a rule telling it to.")
-    st.markdown(
-        f'<p class="caveat">Solver: {opt_report["solver"]}. {opt_report["status"]} '
-        'The objective is total net value per year subject to every supplier\'s output, '
-        'every receiver\'s intake, and each receiver\'s ceiling for a given material. '
-        'Both plans are feasible; neither is a plan anyone has agreed to.</p>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(ui.chip_row([
+        ui.chip(f'solver: {opt_report["solver"]}', "accent"),
+        ui.chip("maximises net value subject to supply, intake and ceilings"),
+        ui.chip("both plans feasible; neither agreed by anyone", "warn"),
+    ]), unsafe_allow_html=True)
 
     st.markdown("---")
     st.markdown(f'<div class="sect">{ui.tr("chains_found")} &mdash; {len(chains)}</div>',
                 unsafe_allow_html=True)
-    st.markdown(
-        '<p class="sub">A chain is one plant receiving a by-product and placing its own, '
-        'so the exchanges only make sense read together. A pair-at-a-time search cannot see '
-        'them, and they are what an industrial park is actually built around. Each hop must '
-        'move a different material - otherwise it is a stream being passed along, not a '
-        'plant transforming it - and no facility appears twice. Ranked by the weakest link, '
-        'because a chain is only as real as its worst exchange.</p>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(ui.chip_row([
+        ui.chip("one plant receives a by-product and places its own", "accent"),
+        ui.chip("ranked by the weakest link"),
+    ]), unsafe_allow_html=True)
 
     if chains.empty:
         st.info(
@@ -1565,24 +1825,21 @@ with tab_chains:
         c1.metric("Weakest link", f"{chain['weakest_score']:.1f}")
         c2.metric("Chain net value", engine.inr(chain["total_net_value"]))
         c3.metric("Chain CO2 avoided", engine.tonnes(chain["total_co2_t"]))
-        st.markdown(
-            '<p class="caveat">Chain totals add the individual exchanges, which overstates '
-            'them if the hops compete for the same tonnage - read the optimised allocation '
-            'above for what the network can actually run at once.</p>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(ui.chip_row([
+            ui.chip("each hop moves a different material"),
+            ui.chip("no facility appears twice"),
+            ui.chip("totals overstate if hops share tonnage", "warn"),
+        ]), unsafe_allow_html=True)
 
 # ======================================================================
 # 5. Gap analysis
 # ======================================================================
 
-with tab_gaps:
-    ui.breadcrumb("tab_gaps")
+if section == "gaps":
     st.markdown(f'<div class="sect">{ui.tr("gaps_heading")}</div>', unsafe_allow_html=True)
     st.markdown(
-        '<p class="sub">These are not errors. Each is a stream someone is paying to dispose '
-        'of, with no receiver in this registry that clears the gates - which is exactly '
-        'where a new processing or aggregation facility would pay for itself.</p>',
+        '<p class="sub">Not errors - streams someone is paying to dispose of, which is '
+        'where a new facility would pay for itself.</p>',
         unsafe_allow_html=True,
     )
 
@@ -1648,14 +1905,11 @@ with tab_gaps:
 
         st.markdown(f'<div class="sect">{ui.tr("gaps_resembles")}</div>',
                     unsafe_allow_html=True)
-        st.markdown(
-            '<p class="sub">The substitution table can only match a stream it has heard '
-            'of. This compares the by-product\'s measured properties against every material '
-            'the knowledge base does know and reports the closest, with the properties that '
-            'drive the resemblance and the one that does not. It is a lead to test, never a '
-            'scored match - nothing here touches the score or the valuation.</p>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(ui.chip_row([
+            ui.chip("compared on measured properties, not names", "accent"),
+            ui.chip("a lead to test, never a scored match", "warn"),
+            ui.chip("touches neither the score nor the valuation", "warn"),
+        ]), unsafe_allow_html=True)
         similar = engine.analogues(gap["material"], top_n=5)
         if similar.empty:
             st.info(
@@ -1682,16 +1936,14 @@ with tab_gaps:
                 },
             )
             best = similar.iloc[0]
-            st.markdown(
-                f'<p class="caveat">Closest analogue: <strong>{best["material"]}</strong> at '
-                f'{best["similarity"]:.0%} resemblance, agreeing on '
-                f'{best["shared_properties"]}, differing most on '
-                f'{best["biggest_difference"]}. It is accepted by '
-                f'{best["accepting_sectors"]}. The next step is a laboratory analysis of the '
-                'real material against that sector\'s specification - resemblance on paper '
-                'is a reason to test, not a reason to sign.</p>',
-                unsafe_allow_html=True,
-            )
+            st.markdown(ui.chip_row([
+                ui.chip(f'closest: {best["material"]}', "accent"),
+                ui.chip(f'{best["similarity"]:.0%} resemblance', "accent"),
+                ui.chip(f'agrees on {best["shared_properties"]}', "good"),
+                ui.chip(f'differs on {best["biggest_difference"]}', "warn"),
+                ui.chip(f'taken by {best["accepting_sectors"]}'),
+                ui.chip("test before you sign", "warn"),
+            ]), unsafe_allow_html=True)
 
         uses = kb.uses_for(gap["material"])
         st.markdown(f'<div class="sect">{ui.tr("gaps_uses")}</div>', unsafe_allow_html=True)
@@ -1719,182 +1971,142 @@ with tab_gaps:
                 },
             )
 
-with tab_method:
-    ui.breadcrumb("tab_method")
+if section == "method":
     st.markdown(f'<div class="sect">{ui.tr("method_scoring")}</div>',
                 unsafe_allow_html=True)
-    st.markdown(
-        "A match is one combination of supplier, by-product, receiver and application. The "
-        "score is 100 times the weighted sum of five factors, each normalised to 0-1. The "
-        "same function scores the sample registry, an uploaded registry and a plant you "
-        "describe yourself."
-    )
-    st.dataframe(
-        pd.DataFrame([
-            {"factor": "Quantity", "weight": engine.W_QUANTITY,
-             "formula": "matched_t / ceiling, where ceiling = receiver need x max_share and "
-                        "matched_t = min(supplier output, ceiling)"},
-            {"factor": "Proximity", "weight": engine.W_PROXIMITY,
-             "formula": f"max(0, 1 - (road_km / max_km) ^ {engine.PROXIMITY_EXPONENT})"},
-            {"factor": "Processing", "weight": engine.W_PROCESSING,
-             "formula": "none 1.00, simple 0.85, moderate 0.55, complex 0.25"},
-            {"factor": "Timing", "weight": engine.W_TIMING,
-             "formula": "months in which both sides are active, divided by 12"},
-            {"factor": "Compliance", "weight": engine.W_COMPLIANCE,
-             "formula": f"unregulated {engine.COMPLIANCE_UNREGULATED:.2f}; regulated and "
-                        f"receiver authorised {engine.COMPLIANCE_REGULATED_AUTHORISED:.2f}; "
-                        f"regulated and not {engine.COMPLIANCE_REGULATED_UNAUTHORISED:.2f}"},
-        ]),
-        hide_index=True, width="stretch",
-        column_config={
-            "factor": st.column_config.TextColumn("Factor", width="small"),
-            "weight": st.column_config.NumberColumn("Weight", format="%.2f", width="small"),
-            "formula": st.column_config.TextColumn("Formula", width="large"),
-        },
-    )
 
-    st.markdown('<div class="sect">Gates</div>', unsafe_allow_html=True)
-    st.markdown(
-        f"- Reject any pairing scoring below **{engine.MIN_SCORE_DEFAULT:.0f}**.\n"
-        f"- Reject any haul beyond **max_km x {engine.DISTANCE_HARD_LIMIT}**. Between max_km "
-        "and that limit a match is listed but scores zero on proximity, and is labelled.\n"
-        f"- Reject anything under **{engine.MIN_MATCH_TONNES:.0f} tonne** a year.\n"
-        "- A facility is never matched to itself."
-    )
+    m1, m2 = st.columns([1, 1.25], gap="medium")
+    with m1:
+        weights = list(engine.WEIGHTS.items())
+        donut = go.Figure(go.Pie(
+            labels=[FACTOR_LABELS[k] for k, _ in weights],
+            values=[v for _, v in weights],
+            hole=0.58, sort=False, direction="clockwise",
+            marker=dict(colors=[FACTOR_COLOURS[k] for k, _ in weights],
+                        line=dict(color="#ffffff", width=2)),
+            texttemplate="%{label}<br>%{percent}",
+            textposition="outside", textfont=dict(size=10),
+            hovertemplate="<b>%{label}</b><br>weight %{value:.2f}<extra></extra>",
+        ))
+        donut.add_annotation(text="score<br>weights", showarrow=False,
+                             font=dict(size=13, color="#1a1f2b"))
+        donut.update_layout(
+            height=330, margin=dict(l=10, r=10, t=10, b=10),
+            paper_bgcolor="rgba(0,0,0,0)", showlegend=False, font=CHART_FONT,
+            hoverlabel=HOVER_STYLE,
+        )
+        st.plotly_chart(donut, width="stretch", config={"displaylogo": False})
 
-    st.markdown('<div class="sect">Valuation, per year</div>', unsafe_allow_html=True)
-    st.code(
-        "material_value  = matched_t x substitution_ratio x virgin_value\n"
-        f"disposal_saved  = matched_t x disposal_rate      (default Rs {engine.DISPOSAL_COST_DEFAULT}/t)\n"
-        f"transport_cost  = matched_t x road_km x {engine.FREIGHT_RATE}      (Rs/t-km, bulk road)\n"
-        "processing_cost = matched_t x "
-        f"{{none {engine.PROCESSING_COST['none']}, simple {engine.PROCESSING_COST['simple']}, "
-        f"moderate {engine.PROCESSING_COST['moderate']}, complex {engine.PROCESSING_COST['complex']}}}\n"
-        "net = material_value + disposal_saved - transport_cost - processing_cost",
-        language="text",
-    )
+    with m2:
+        st.markdown(ui.chip_row([
+            ui.chip(f'reject below {engine.MIN_SCORE_DEFAULT:.0f}', "bad"),
+            ui.chip(f'reject beyond max_km x {engine.DISTANCE_HARD_LIMIT}', "bad"),
+            ui.chip(f'reject under {engine.MIN_MATCH_TONNES:.0f} t/yr', "bad"),
+            ui.chip("never matched to itself", "bad"),
+        ]), unsafe_allow_html=True)
+        st.markdown(ui.chip_row([
+            ui.chip(f'road Rs {engine.FREIGHT_RATE}/t-km', "accent"),
+            ui.chip(f'rail Rs {engine.RAIL_RATE}/t-km + Rs {engine.RAIL_TERMINAL_COST}/t',
+                    "accent"),
+            ui.chip(f'pipeline Rs {engine.PIPELINE_RATE:.0f}/t-km', "accent"),
+            ui.chip(f'disposal Rs {engine.DISPOSAL_COST_DEFAULT}/t default', "accent"),
+            ui.chip(f'road factor {engine.ROAD_CIRCUITY_FACTOR:.2f}x haversine',
+                    "accent"),
+        ]), unsafe_allow_html=True)
+        st.markdown(ui.chip_row([
+            ui.chip("capacities representative, not audited", "warn"),
+            ui.chip("rupees gross across both parties, not margin", "warn"),
+            ui.chip("CO2 is displaced production, not a verified credit", "warn"),
+            ui.chip("distance is straight-line, not routed", "warn"),
+            ui.chip("no quality specification checked in the logistics engine",
+                    "warn"),
+            ui.chip("water footprint not modelled", "warn"),
+        ]), unsafe_allow_html=True)
+        st.code(
+            "material_value  = matched_t x substitution_ratio x virgin_value\n"
+            "disposal_saved  = matched_t x disposal_rate\n"
+            "transport_cost  = matched_t x (road_km x rate + terminal)\n"
+            "processing_cost = matched_t x processing_rate\n"
+            "net = material_value + disposal_saved - transport_cost - processing_cost",
+            language="text",
+        )
 
-    st.markdown('<div class="sect">Every assumption, stated</div>', unsafe_allow_html=True)
-    st.markdown(
-        f"""
-- **Distance** is haversine great-circle distance multiplied by
-  **{engine.ROAD_CIRCUITY_FACTOR:.2f}** for road circuity. No routing engine, no traffic, no
-  terrain. A hill road or a river crossing will be worse than this says.
-- **Freight** is **Rs {engine.FREIGHT_RATE}/tonne-km** by bulk road, full truck loads; part
-  loads and return-empty legs cost more. **Rail** is offered at
-  **Rs {engine.RAIL_RATE}/tonne-km** plus **Rs {engine.RAIL_TERMINAL_COST}/tonne** of terminal
-  handling covering both road legs, and is taken only above
-  **{engine.RAIL_MIN_KM} km** and **{engine.RAIL_MIN_TONNES:,} t/yr** and only when it is
-  genuinely cheaper door to door. Each match reports which mode it assumes.
-- **Pipeline** transfer for waste heat and coke oven gas is priced separately at
-  **Rs {engine.PIPELINE_RATE:.0f}/tonne-km** as an amortised figure.
-- **Disposal avoided** defaults to **Rs {engine.DISPOSAL_COST_DEFAULT}/tonne**, overridden per
-  material where that is wrong: a hazardous stream routed to a TSDF costs several times this,
-  a captive ash pond rather less. For fly ash the saving is partly a compliance cost rather
-  than a landfill fee, since utilisation is already mandatory.
-- **Processing costs** are order-of-magnitude figures per tonne handled, not quotations.
-- **Virgin material values** are indicative Indian market levels, not contract prices.
-- **CO2 avoided** counts the displaced virgin material's production emissions only. It is not
-  a verified carbon credit. Process CO2 reuse is **not** sequestration.
-- **max_share** is anchored to Indian standards where they exist: IS 1489 and IS 3812 for fly
-  ash in PPC, IS 455 for slag cement, IS 383 for recycled aggregate, CPCB co-processing
-  guidance for regulated and mixed streams.
-- **Timing** divides overlapping active months by twelve, so a six-month crushing season
+    with st.expander("Scoring formulas, gates and every assumption in full",
+                     expanded=False):
+        st.dataframe(
+            pd.DataFrame([
+                {"factor": "Quantity", "weight": engine.W_QUANTITY,
+                 "formula": "matched_t / ceiling, where ceiling = receiver need "
+                            "x max_share and matched_t = min(supplier output, ceiling)"},
+                {"factor": "Proximity", "weight": engine.W_PROXIMITY,
+                 "formula": f"max(0, 1 - (road_km / max_km) ^ {engine.PROXIMITY_EXPONENT})"},
+                {"factor": "Processing", "weight": engine.W_PROCESSING,
+                 "formula": "none 1.00, simple 0.85, moderate 0.55, complex 0.25"},
+                {"factor": "Timing", "weight": engine.W_TIMING,
+                 "formula": "months in which both sides are active, divided by 12"},
+                {"factor": "Compliance", "weight": engine.W_COMPLIANCE,
+                 "formula": f"unregulated {engine.COMPLIANCE_UNREGULATED:.2f}; "
+                            f"regulated and authorised {engine.COMPLIANCE_REGULATED_AUTHORISED:.2f}; "
+                            f"regulated and not {engine.COMPLIANCE_REGULATED_UNAUTHORISED:.2f}"},
+            ]),
+            hide_index=True, width="stretch",
+            column_config={
+                "factor": st.column_config.TextColumn("Factor", width="small"),
+                "weight": st.column_config.NumberColumn("Weight", format="%.2f",
+                                                        width="small"),
+                "formula": st.column_config.TextColumn("Formula", width="large"),
+            },
+        )
+        st.markdown(
+            f"""
+- Distance is haversine multiplied by **{engine.ROAD_CIRCUITY_FACTOR:.2f}** for road
+  circuity. No routing, no traffic, no terrain.
+- Rail is taken only above **{engine.RAIL_MIN_KM} km** and
+  **{engine.RAIL_MIN_TONNES:,} t/yr**, and only when genuinely cheaper door to door.
+- Disposal avoided defaults to **Rs {engine.DISPOSAL_COST_DEFAULT}/t**, overridden per
+  material; for fly ash the saving is partly a compliance cost, since utilisation is
+  already mandatory.
+- max_share is anchored to IS 1489, IS 3812, IS 455, IS 383 and CPCB co-processing
+  guidance where those exist.
+- Timing divides overlapping active months by twelve, so a six-month crushing season
   feeding a year-round kiln scores 0.50.
-- **Capacities in the sample registry** are representative of plants of that type. They are
-  not audited plant data.
-- **Rupee values** are the gross prize across both parties.
-- **Determinism**: no language model produces any figure here. The explanation text receives
-  finished numbers and only arranges them into sentences.
-- **The map** draws state boundaries from a simplified public GeoJSON bundled with the app,
-  and Plotly's own basemap is switched off, so nothing is fetched from the internet at render
-  time. State fill encodes one chosen metric; it is not a political boundary statement.
+- The quantity factor measures the receiver, not the supplier, so a large supplier can
+  score 1.00 while placing a small fraction of its output - each match also reports
+  supplier_share.
+- Pairwise scores over-commit supply; allocated_tpa is a feasible plan and the
+  optimiser solves the whole allocation at once.
+- The materials layer's property profiles are indicative typical compositions, not
+  assays, and feed only the grading and blending screens - never the logistics score.
+- No language model produces any figure. The same registry always yields the same
+  matches in the same order.
 """
-    )
+        )
 
-    st.markdown('<div class="sect">Known limits of this model</div>', unsafe_allow_html=True)
-    st.markdown(
-        f"""
-- **The quantity factor measures the receiver, not the supplier.** It is
-  `matched_t / ceiling`, so any supplier whose output exceeds the receiver's ceiling scores
-  1.00 - whether it places 90% of its output or 3%. Each match therefore also reports
-  `supplier_share`, and the audit panel says so explicitly.
-- **Scores are pairwise, so `matched_tpa` over-commits supply.** A supplier able to serve six
-  receivers appears at full tonnage against each. The engine adds a greedy best-score-first
-  allocation: `allocated_tpa` is a feasible plan that never promises the same tonne twice. At
-  the current threshold it places **{engine.tonnes(summary['allocated_tonnes'])}** for
-  **{engine.inr(summary['allocated_value'])}**, against a headline
-  **{engine.tonnes(summary['tonnes_diverted'])}** for
-  **{engine.inr(summary['value_unlocked'])}**. Neither is a plan anyone has agreed to.
-- **Energy streams are forced into a mass model.** Waste heat has no tonnage; its registry
-  figure is tonnes of coal equivalent, and coke oven gas is priced on a natural-gas
-  displacement basis.
-- **Knowledge base coverage is the ceiling on discovery.** {len(kb.SUBSTITUTIONS)} substitutions
-  across {len(kb.materials())} materials is a screening tool, not an encyclopaedia.
-- **No quality specification is checked.** Two facilities may both handle 'fly ash' and still
-  be incompatible on fineness, loss on ignition or chloride.
-"""
-    )
-
-    st.markdown('<div class="sect">Beyond the substitution table</div>',
-                unsafe_allow_html=True)
-    st.markdown(
-        f"""
-Three passes run on top of the pairwise scoring. None of them changes a score.
-
-- **Analogue discovery.** The substitution table can only match a stream it already knows,
-  which makes the genuinely hidden exchanges invisible. Every material carries a profile of
-  {len(kb.PROFILE_KEYS)} indicative properties - silica, alumina, lime, iron oxide, sulphur,
-  recoverable metal, organic carbon, calorific value, moisture, bulk density, alkalinity -
-  and an unplaced stream is compared against all {len(kb.MATERIAL_PROFILES)} profiles by
-  weighted Euclidean distance. Deterministic, offline, no model and no embeddings: the same
-  stream always returns the same analogues, and each one names the properties that agree and
-  the one that does not, so it can be argued with. **These profiles are indicative typical
-  compositions, not an assay of anybody's actual waste, and they feed nothing but the
-  resemblance ranking.** A suggestion is a reason to send a sample to a laboratory.
-- **Multi-hop chains.** A depth-first walk over the match graph finds sequences where one
-  plant receives a by-product and places its own. Each hop must move a different material and
-  no facility may repeat, so a chain describes transformation rather than a stream being
-  passed along. Chains are ranked by their weakest link. Chain totals add the individual
-  exchanges and will overstate them where hops compete for the same tonnage.
-- **Network optimisation.** The greedy allocation takes matches best score first, which is
-  feasible but not optimal - score measures practicality, not value. The optimiser solves the
-  whole allocation as a linear program (SciPy HiGHS), maximising total net value subject to
-  every supplier's output, every receiver's intake and each receiver's per-material ceiling.
-  Loss-making exchanges fall to zero on their own rather than by a rule. If SciPy is missing
-  the app falls back to the greedy plan and says so.
-
-**Circularity** is the share of by-product tonnage in the registry that finds a home. The
-denominator is every tonne offered, the unplaced streams included, so it is deliberately hard
-to move. **Virgin material avoided** applies each substitution ratio to the tonnage placed.
-**Water footprint is not modelled** - there is no defensible per-tonne figure for most of
-these streams, and inventing one would undermine every number that is defensible.
-"""
-    )
-
-    st.markdown(f'<div class="sect">Knowledge base: {len(kb.SUBSTITUTIONS)} substitutions</div>',
-                unsafe_allow_html=True)
-    st.markdown(
-        '<p class="sub">The whole basis for matching, browsable. Nothing is matched that is '
-        'not in this table.</p>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(f'<div class="sect">{ui.tr("method_kb")} '
+                f'&mdash; {len(kb.SUBSTITUTIONS)}</div>', unsafe_allow_html=True)
     st.dataframe(
-        kb_table(), hide_index=True, width="stretch", height=460,
+        kb_table(), hide_index=True, width="stretch", height=420,
         column_config={
             "material": st.column_config.TextColumn("By-product", width="medium"),
             "application": st.column_config.TextColumn("Application", width="medium"),
             "replaces": st.column_config.TextColumn("Replaces", width="medium"),
-            "accepting sectors": st.column_config.TextColumn("Accepting sectors", width="medium"),
-            "ratio": st.column_config.NumberColumn("Ratio", format="%.2f", width="small"),
-            "max share": st.column_config.NumberColumn("Max share", format="%.2f", width="small"),
-            "max km": st.column_config.NumberColumn("Max km", format="%.0f", width="small"),
-            "CO2 t/t": st.column_config.NumberColumn("CO2 t/t", format="%.2f", width="small"),
-            "virgin value Rs/t": st.column_config.NumberColumn("Virgin Rs/t", format="%.0f"),
-            "disposal Rs/t": st.column_config.NumberColumn("Disposal Rs/t", format="%.0f"),
+            "accepting sectors": st.column_config.TextColumn("Accepting sectors",
+                                                             width="medium"),
+            "ratio": st.column_config.NumberColumn("Ratio", format="%.2f",
+                                                   width="small"),
+            "max share": st.column_config.NumberColumn("Max share", format="%.2f",
+                                                       width="small"),
+            "max km": st.column_config.NumberColumn("Max km", format="%.0f",
+                                                    width="small"),
+            "CO2 t/t": st.column_config.NumberColumn("CO2 t/t", format="%.2f",
+                                                     width="small"),
+            "virgin value Rs/t": st.column_config.NumberColumn("Virgin Rs/t",
+                                                               format="%.0f"),
+            "disposal Rs/t": st.column_config.NumberColumn("Disposal Rs/t",
+                                                           format="%.0f"),
             "note": st.column_config.TextColumn("Practical catch", width="large"),
         },
     )
 
-    st.markdown('<div class="sect">Registry in use</div>', unsafe_allow_html=True)
-    st.dataframe(facilities, hide_index=True, width="stretch", height=300)
+    with st.expander(ui.tr("method_registry"), expanded=False):
+        st.dataframe(facilities, hide_index=True, width="stretch", height=300)
