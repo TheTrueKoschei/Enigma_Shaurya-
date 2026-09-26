@@ -20,6 +20,7 @@ import streamlit as st
 import blending
 import carbon
 import conformance
+import coverage
 import engine
 import explain
 import i18n
@@ -741,6 +742,25 @@ if problems:
 if facilities.empty:
     st.error("No usable facilities in this registry. Check the columns against the template.")
     st.stop()
+
+# ----------------------------------------------------------------------
+# Coverage band. Two numbers, never conflated: what is loaded, and how big the
+# problem is. A headline claiming a million companies over a 255-row registry
+# is the fastest way to lose an assessor, so the source sits next to the figure.
+# ----------------------------------------------------------------------
+reach = coverage.summary(facilities, kb, specs, materials)
+st.markdown(ui.chip_row([
+    ui.chip(f'<strong>{reach["loaded"]:,}</strong> facilities loaded', "accent"),
+    ui.chip(f'{reach["supplying"]} offering a by-product'),
+    ui.chip(f'{reach["sectors"]} sectors &middot; {reach["states"]} states'),
+    ui.chip(f'{reach["substitutions"]} substitutions &middot; '
+            f'{reach["specifications"]} specifications &middot; '
+            f'{reach["profiled_materials"]} property profiles'),
+    ui.chip(f'addressable: <strong>{reach["addressable_pretty"]}</strong> '
+            f'{reach["addressable_label"].lower()}', "good"),
+    ui.chip(f'source: {reach["addressable_source"]} &mdash; verify before quoting',
+            "warn"),
+]), unsafe_allow_html=True)
 
 unmatched_tonnes = float(gaps["output_tpa"].sum()) if len(gaps) else 0.0
 placed_share = (100.0 * summary["tonnes_diverted"]
@@ -2107,6 +2127,65 @@ if section == "method":
             "note": st.column_config.TextColumn("Practical catch", width="large"),
         },
     )
+
+    st.markdown('<div class="sect">Coverage and capacity</div>',
+                unsafe_allow_html=True)
+    st.markdown(
+        '<p class="sub">Two different numbers: what this registry holds, and how '
+        'large the universe is that the engine could score.</p>',
+        unsafe_allow_html=True,
+    )
+    st.dataframe(
+        pd.DataFrame([{
+            "register": entry["label"],
+            "count": entry["count"],
+            "as": coverage.format_count(entry["count"]),
+            "source": entry["source"],
+            "period": entry["period"],
+            "verified in this build": "no",
+            "what it means here": entry["caveat"],
+        } for entry in coverage.ADDRESSABLE.values()]),
+        hide_index=True, width="stretch",
+        column_config={
+            "register": st.column_config.TextColumn("Public register",
+                                                    width="medium"),
+            "count": st.column_config.NumberColumn("Count", format="%.0f"),
+            "as": st.column_config.TextColumn("As reported", width="small"),
+            "source": st.column_config.TextColumn("Source", width="medium"),
+            "period": st.column_config.TextColumn("Period", width="medium"),
+            "verified in this build": st.column_config.TextColumn("Verified here",
+                                                                  width="small"),
+            "what it means here": st.column_config.TextColumn("What it means here",
+                                                              width="large"),
+        },
+    )
+    st.markdown(ui.chip_row([
+        ui.chip("loaded and addressable are different numbers", "warn"),
+        ui.chip("none of these were fetched live from this build", "warn"),
+        ui.chip("edit them in coverage.py before quoting", "warn"),
+    ]), unsafe_allow_html=True)
+
+    if st.button("Run a capacity test", key="run_benchmark"):
+        with st.spinner("Scoring a synthetic national registry..."):
+            st.session_state["benchmark"] = coverage.benchmark(facilities, 2000)
+    bench = st.session_state.get("benchmark")
+    if bench and bench.get("ran"):
+        ui.stat_row([
+            ui.stat_block("Synthetic facilities scored",
+                          f'{bench["facilities"]:,}', "scattered across India"),
+            ui.stat_block("Wall clock", f'{bench["seconds"]:.2f} s',
+                          "single core, this machine"),
+            ui.stat_block("Candidate exchanges found",
+                          f'{bench["matches"]:,}', ""),
+            ui.stat_block("Throughput",
+                          f'{bench["facilities_per_second"]:,.0f} /s',
+                          "facilities scored per second"),
+        ], columns=4)
+        st.markdown(ui.chip_row([
+            ui.chip("synthetic registry, used only to time the engine", "warn"),
+            ui.chip("never mixed with the loaded registry", "warn"),
+            ui.chip("national spread - the hard case for the spatial index"),
+        ]), unsafe_allow_html=True)
 
     with st.expander(ui.tr("method_registry"), expanded=False):
         st.dataframe(facilities, hide_index=True, width="stretch", height=300)

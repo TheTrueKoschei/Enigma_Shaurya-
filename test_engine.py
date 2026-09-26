@@ -837,3 +837,116 @@ def test_interface_strings_cover_both_languages():
     # an unknown key falls back to itself rather than raising
     assert i18n.t("no_such_key", "hi") == "no_such_key"
     assert i18n.t("portal", "en") != i18n.t("portal", "hi")
+
+
+# ----------------------------------------------------------------------
+# Spatial index and scale
+# ----------------------------------------------------------------------
+
+def test_the_spatial_index_finds_exactly_what_brute_force_finds(facilities):
+    """The index must change which pairs are tested, never which pairs match."""
+    indexed = engine.find_matches(facilities)
+    brute = engine.find_matches_bruteforce(facilities)
+    assert indexed.equals(brute)
+
+
+def test_the_index_is_equivalent_on_a_scattered_registry(facilities):
+    """A national spread is the hard case: cells are sparse and far apart."""
+    import random
+    random.seed(3)
+    rows = []
+    for i in range(200):
+        row = dict(facilities.iloc[i % len(facilities)])
+        row["name"] = f'{row["name"]} #{i}'
+        row["lat"] = random.uniform(8.5, 34.0)
+        row["lon"] = random.uniform(69.5, 95.0)
+        rows.append(row)
+    scattered = pd.DataFrame(rows)[engine.REQUIRED_COLUMNS]
+    assert engine.find_matches(scattered).equals(
+        engine.find_matches_bruteforce(scattered))
+
+
+def test_cell_box_always_covers_the_true_radius():
+    """Under-covering would silently drop real matches, so it must over-cover."""
+    for lat, lon in [(8.5, 70.0), (22.0, 79.0), (34.0, 95.0)]:
+        for km in (50.0, 400.0, 1200.0):
+            cells = set(engine._cells_within(lat, lon, km))
+            # every point at that distance, sampled around the compass, must
+            # fall in a cell the box includes
+            for bearing in range(0, 360, 15):
+                import math
+                rad = math.radians(bearing)
+                dlat = (km / engine.KM_PER_DEGREE_LAT) * math.cos(rad)
+                dlon = (km / (engine.KM_PER_DEGREE_LAT
+                              * max(0.2, math.cos(math.radians(lat))))) * math.sin(rad)
+                assert engine._cell(lat + dlat, lon + dlon) in cells, \
+                    f"missed a cell at {lat},{lon} {km}km bearing {bearing}"
+
+
+def test_the_sample_registry_is_substantial(facilities):
+    assert len(facilities) >= 200, "the registry should cover real national scale"
+    assert facilities["state"].nunique() >= 18
+    assert facilities["sector"].nunique() >= 25
+    offering = ((facilities["output_material"].astype(str).str.strip() != "")
+                & (facilities["output_tpa"] > 0)).sum()
+    assert offering >= 100
+
+
+def test_coordinates_are_all_inside_india(facilities):
+    bounds = engine.INDIA_BOUNDS
+    assert facilities["lat"].between(bounds["lat_min"], bounds["lat_max"]).all()
+    assert facilities["lon"].between(bounds["lon_min"], bounds["lon_max"]).all()
+
+
+# ----------------------------------------------------------------------
+# Coverage reporting
+# ----------------------------------------------------------------------
+
+def test_coverage_separates_loaded_from_addressable(facilities):
+    import coverage
+    import materials as materials_module
+    import specs as specs_module
+    report = coverage.summary(facilities, kb, specs_module, materials_module)
+    assert report["loaded"] == len(facilities)
+    assert report["addressable_count"] > report["loaded"], (
+        "addressable is the size of the problem, not the size of the demo"
+    )
+    assert report["addressable_source"].strip()
+
+
+def test_every_addressable_figure_carries_a_source_and_is_marked_unverified():
+    """No headline number may appear without somewhere to check it."""
+    import coverage
+    assert coverage.ADDRESSABLE
+    for key, entry in coverage.ADDRESSABLE.items():
+        assert entry["count"] > 0, key
+        assert entry["source"].strip(), key
+        assert entry["period"].strip(), key
+        assert entry["caveat"].strip(), key
+        assert entry["verified"] is False, (
+            f"{key} claims to be verified; nothing here was fetched live"
+        )
+
+
+def test_indian_number_formatting():
+    import coverage
+    assert coverage.format_count(63_000_000) == "6.30 crore"
+    assert coverage.format_count(250_000) == "2.50 lakh"
+    assert coverage.format_count(80_000) == "80,000"
+
+
+def test_benchmark_measures_rather_than_asserts(facilities):
+    import coverage
+    result = coverage.benchmark(facilities, size=150, seed=1)
+    assert result["ran"]
+    assert result["facilities"] == 150
+    assert result["seconds"] > 0
+    assert result["facilities_per_second"] > 0
+    # deterministic for a fixed seed: the same synthetic registry each time
+    again = coverage.benchmark(facilities, size=150, seed=1)
+    assert again["matches"] == result["matches"]
+
+
+def test_benchmark_on_an_empty_registry_is_safe():
+    import coverage
+    assert coverage.benchmark(pd.DataFrame(), 100)["ran"] is False

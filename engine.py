@@ -574,6 +574,79 @@ def _allocate(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# ----------------------------------------------------------------------
+# Spatial index. One-degree cells, used only to skip pairs that cannot
+# possibly clear the distance gate. Never changes a score or a verdict.
+# ----------------------------------------------------------------------
+KM_PER_DEGREE_LAT = 111.0        # close enough anywhere on the planet
+MIN_COS_LATITUDE = 0.20          # guard so a high latitude cannot explode the box
+
+
+def _cell(lat: float, lon: float) -> tuple:
+    return (int(math.floor(lat)), int(math.floor(lon)))
+
+
+def _cells_within(lat: float, lon: float, straight_km: float) -> list:
+    """Every one-degree cell that could hold a point within straight_km.
+
+    Deliberately over-inclusive: a box around the circle, widened by one cell on
+    each side. Missing a cell would drop a real match, so the error is always
+    taken in the direction of testing too many pairs rather than too few.
+    """
+    if straight_km <= 0:
+        return [_cell(lat, lon)]
+    span_lat = int(straight_km / KM_PER_DEGREE_LAT) + 1
+    cos_lat = max(MIN_COS_LATITUDE, math.cos(math.radians(lat)))
+    span_lon = int(straight_km / (KM_PER_DEGREE_LAT * cos_lat)) + 1
+    base_lat, base_lon = _cell(lat, lon)
+    return [(base_lat + dy, base_lon + dx)
+            for dy in range(-span_lat, span_lat + 1)
+            for dx in range(-span_lon, span_lon + 1)]
+
+
+def find_matches_bruteforce(facilities: pd.DataFrame,
+                            min_score: float = MIN_SCORE_DEFAULT) -> pd.DataFrame:
+    """The unindexed search, kept so tests can prove the index changes nothing.
+
+    Not used by the application - it exists purely as the reference the spatial
+    index is checked against.
+    """
+    if facilities is None or len(facilities) == 0:
+        return _empty_matches()
+    suppliers = facilities[
+        (facilities["output_material"].astype(str).str.strip() != "")
+        & (facilities["output_tpa"] > 0)
+    ]
+    receivers = facilities[facilities["input_need_tpa"] > 0]
+    if suppliers.empty or receivers.empty:
+        return _empty_matches()
+
+    by_sector: dict = {}
+    for _, r in receivers.iterrows():
+        by_sector.setdefault(str(r["sector"]).lower(), []).append(r)
+
+    rows = []
+    for _, supplier in suppliers.iterrows():
+        for entry in kb.uses_for(supplier["output_material"]):
+            for sector in entry["accepting_sectors"]:
+                for receiver in by_sector.get(sector.lower(), []):
+                    if receiver["name"] == supplier["name"]:
+                        continue
+                    match = _score_pair(supplier, receiver, entry)
+                    if match is None or match["score"] < min_score:
+                        continue
+                    rows.append(match)
+    if not rows:
+        return _empty_matches()
+    df = pd.DataFrame(rows).sort_values(
+        by=["score", "supplier", "material", "receiver", "application"],
+        ascending=[False, True, True, True, True], kind="mergesort",
+    ).reset_index(drop=True)
+    df = _allocate(df)
+    df.insert(0, "rank", np.arange(1, len(df) + 1))
+    return df
+
+
 def find_matches(facilities: pd.DataFrame, min_score: float = MIN_SCORE_DEFAULT) -> pd.DataFrame:
     """Every viable exchange in the registry, ranked by score.
 
@@ -591,21 +664,40 @@ def find_matches(facilities: pd.DataFrame, min_score: float = MIN_SCORE_DEFAULT)
     if suppliers.empty or receivers.empty:
         return _empty_matches()
 
-    receivers_by_sector: dict = {}
+    # Receivers indexed by sector AND by a one-degree geographic cell. Every
+    # match has to clear road_km <= max_km x 1.5, so the overwhelming majority
+    # of supplier-receiver pairs are impossible on distance alone and testing
+    # them is wasted work. Scanning only the cells inside that radius turns the
+    # search from quadratic in the registry size into roughly linear, which is
+    # what lets this run on a national registry rather than a demo one.
+    #
+    # The cell box is deliberately conservative - it always covers at least the
+    # true circle - and every surviving pair still goes through the exact
+    # haversine check in _score_pair. The index therefore changes which pairs
+    # are *tested*, never which pairs *match*, and a test asserts the results
+    # are identical with the index and without it.
+    receivers_by_cell: dict = {}
     for _, r in receivers.iterrows():
-        receivers_by_sector.setdefault(str(r["sector"]).lower(), []).append(r)
+        key = (str(r["sector"]).lower(), _cell(float(r["lat"]), float(r["lon"])))
+        receivers_by_cell.setdefault(key, []).append(r)
 
     rows = []
     for _, supplier in suppliers.iterrows():
+        sup_lat, sup_lon = float(supplier["lat"]), float(supplier["lon"])
         for entry in kb.uses_for(supplier["output_material"]):
+            # Furthest a straight line can be and still clear the distance gate.
+            straight_limit = (float(entry["max_km"]) * DISTANCE_HARD_LIMIT
+                              / ROAD_CIRCUITY_FACTOR)
             for sector in entry["accepting_sectors"]:
-                for receiver in receivers_by_sector.get(sector.lower(), []):
-                    if receiver["name"] == supplier["name"]:
-                        continue                      # no self-matches
-                    match = _score_pair(supplier, receiver, entry)
-                    if match is None or match["score"] < min_score:
-                        continue
-                    rows.append(match)
+                sector_key = sector.lower()
+                for cell in _cells_within(sup_lat, sup_lon, straight_limit):
+                    for receiver in receivers_by_cell.get((sector_key, cell), ()):
+                        if receiver["name"] == supplier["name"]:
+                            continue                  # no self-matches
+                        match = _score_pair(supplier, receiver, entry)
+                        if match is None or match["score"] < min_score:
+                            continue
+                        rows.append(match)
 
     if not rows:
         return _empty_matches()

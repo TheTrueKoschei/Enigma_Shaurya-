@@ -62,3 +62,195 @@ Bharuch Fertiliser and Chemicals,fertiliser,Gujarat,21.7051,72.9959,,0,720000,co
 Panipat Textile Mills,textile,Haryana,29.3909,76.9635,,0,132000,continuous (year-round),no
 Bargarh Cement Works,cement,Odisha,21.3333,83.6167,,0,1850000,continuous (year-round),yes
 Jalna Cattle Feed Unit,feed,Maharashtra,19.8410,75.8864,,0,55000,continuous (year-round),no
+Dadri Thermal Power Station,thermal power,Uttar Pradesh,28.592,77.6,fly ash,1980000,0,continuous (year-round),no
+Rihand Super Thermal Power Station,thermal power,Uttar Pradesh,24.03,82.79,fly ash,2760000,0,continuous (year-round),no
+Unchahar Thermal Power Station,thermal power,Uttar Pradesh,25.88,81.3,fly ash,1150000,0,continuous (year-round),no
+Anpara Thermal Power Station,thermal power,Uttar Pradesh,24.2,82.79,fly ash,2450000,0,continuous (year-round),no
+Obra Thermal Power Station,thermal power,Uttar Pradesh,24.42,82.98,bottom ash,340000,0,continuous (year-round),no
+Parichha Thermal Power Station,thermal power,Uttar Pradesh,25.51,78.76,fly ash,1080000,0,continuous (year-round),no
+Tanda Thermal Power Station,thermal power,Uttar Pradesh,26.55,82.65,fly ash,860000,0,continuous (year-round),no
+Meja Thermal Power Station,thermal power,Uttar Pradesh,25.2,81.9,fly ash,940000,0,continuous (year-round),no
+Farakka Super Thermal Power Station,thermal power,West Bengal,24.77,87.9,fly ash,1720000,0,continuous (year-round),no
+Bakreswar Thermal Power Station,thermal power,West Bengal,23.9,87.43,fly ash,1240000,0,continuous (year-round),no
+Kolaghat Thermal Power Station,thermal power,West Bengal,22.43,87.87,fly ash,1160000,0,continuous (year-round),no
+Santaldih Thermal Power Station,thermal power,West Bengal,23.53,86.42,fly ash,690000,0,continuous (year-round),no
+Durgapur Thermal Power Station,thermal power,West Bengal,23.55,87.3,bottom ash,210000,0,continuous (year-round),no
+Kahalgaon Super Thermal Power Station,thermal power,Bihar,25.26,87.23,fly ash,1890000,0,continuous (year-round),no
+Barh Super Thermal Power Station,thermal power,Bihar,25.48,85.7,fly ash,1420000,0,continuous (year-round),no
+Nabinagar Thermal Power Station,thermal power,Bihar,24.61,84.13,fly ash,980000,0,continuous (year-round),no
+Simhadri Super Thermal Power Station,thermal power,Andhra Pradesh,17.58,83.02,fly ash,1560000,0,continuous (year-round),no
+Vijayawada Thermal Power Station,thermal power,Andhra Pradesh,16.62,80.54,fly ash,1780000,0,continuous (year-round),no
+Krishnapatnam Thermal Power Station,thermal power,Andhra Pradesh,14.27,80.12,fly ash,1130000,0,continuous (year-round),no
+Kothagudem Thermal Power Station,thermal power,Telangana,17.55,80.62,fly ash,1340000,0,continuous (year-round),no
+Kudgi Super Thermal Power Station,thermal power,Karnataka,16.42,75.92,fly ash,1470000,0,continuous (year-round),no
+Raichur Thermal Power Station,thermal power,Karnataka,16.33,77.35,fly ash,1280000,0,continuous (year-round),no
+Bellary Thermal Power Station,thermal power,Karnataka,15.15,76.93,fly ash,940000,0,continuous (year-round),no
+Ennore Thermal Power Station,thermal power,Tamil Nadu,13.23,80.32,fly ash,720000,0,continuous (year-round),no
+Mettur Thermal Power Station,thermal power,Tamil Nadu,11.79,77.8,fly ash,1390000,0,continuous (year-round),no
+Tuticorin Thermal Power Station,thermal power,Tamil Nadu,8.77,78.14,fly ash,1050000,0,continuous (year-round),no
+Neyveli Thermal Power Station,thermal power,Tamil Nadu,11.61,79.48,fly ash,2210000,0,continuous (year-round),no
+Solapur Super Thermal Power Station,thermal power,Maharashtra,17.66,75.9,fly ash,1090000,0,continuous (year-round),no
+Mouda Super Thermal Power Station,thermal power,Maharashtra,21.3,79.3,fly ash,1240000,0,continuous (year-round),no
+Koradi Thermal Power Station,thermal power,Maharashtra,21.24,79.1,fly ash,1620000,0,continuous (year-round),no
+Khaperkheda Thermal Power Station,thermal power,Maharashtra,21.26,79.08,fly ash,880000,0,continuous (year-round),no
+Chandrapur Super Thermal Power Station,thermal power,Maharashtra,19.96,79.3,fly ash,2380000,0,continuous (year-round),no
+Bhusawal Thermal Power Station,thermal power,Maharashtra,21.04,75.8,fly ash,970000,0,continuous (year-round),no
+Parli Thermal Power Station,thermal power,Maharashtra,18.85,76.53,fly ash,760000,0,continuous (year-round),no
+Gadarwara Super Thermal Power Station,thermal power,Madhya Pradesh,22.92,78.78,fly ash,1310000,0,continuous (year-round),no
+Khargone Super Thermal Power Station,thermal power,Madhya Pradesh,21.82,75.61,fly ash,1180000,0,continuous (year-round),no
+Satpura Thermal Power Station,thermal power,Madhya Pradesh,22.08,78.18,fly ash,1040000,0,continuous (year-round),no
+Birsinghpur Thermal Power Station,thermal power,Madhya Pradesh,23.32,81.08,fly ash,1150000,0,continuous (year-round),no
+Lara Super Thermal Power Station,thermal power,Chhattisgarh,21.9,83.2,fly ash,1260000,0,continuous (year-round),no
+Darlipali Super Thermal Power Station,thermal power,Odisha,21.86,83.7,fly ash,1190000,0,continuous (year-round),no
+Suratgarh Thermal Power Station,thermal power,Rajasthan,29.29,73.89,fly ash,1420000,0,continuous (year-round),no
+Chhabra Thermal Power Station,thermal power,Rajasthan,24.67,76.84,fly ash,1090000,0,continuous (year-round),no
+Panipat Thermal Power Station,thermal power,Haryana,29.39,76.97,fly ash,1020000,0,continuous (year-round),no
+Ropar Thermal Power Station,thermal power,Punjab,30.97,76.53,fly ash,840000,0,continuous (year-round),no
+Lehra Mohabbat Thermal Power Station,thermal power,Punjab,30.21,74.95,fly ash,690000,0,continuous (year-round),no
+Wanakbori Thermal Power Station,thermal power,Gujarat,22.85,73.1,fly ash,1510000,0,continuous (year-round),no
+Ukai Thermal Power Station,thermal power,Gujarat,21.24,73.59,fly ash,1080000,0,continuous (year-round),no
+Sikka Thermal Power Station,thermal power,Gujarat,22.43,69.83,FGD gypsum,145000,0,continuous (year-round),no
+Trombay Thermal Power Station,thermal power,Maharashtra,19.0,72.92,FGD gypsum,132000,0,continuous (year-round),no
+Jayanthipuram Cement Works,cement,Andhra Pradesh,16.62,80.25,,0,2450000,continuous (year-round),yes
+Yerraguntla Cement Works,cement,Andhra Pradesh,14.64,78.54,,0,1870000,continuous (year-round),yes
+Tandur Cement Works,cement,Telangana,17.24,77.58,,0,2180000,continuous (year-round),yes
+Nalgonda Cement Works,cement,Telangana,17.05,79.27,,0,1640000,continuous (year-round),yes
+Nimbahera Cement Works,cement,Rajasthan,24.62,74.68,,0,2760000,continuous (year-round),yes
+Chittorgarh Cement Works,cement,Rajasthan,24.88,74.63,,0,2340000,continuous (year-round),yes
+Beawar Cement Works,cement,Rajasthan,26.1,74.32,,0,1920000,continuous (year-round),yes
+Lakheri Cement Works,cement,Rajasthan,25.67,76.17,,0,1180000,continuous (year-round),yes
+Gotan Cement Works,cement,Rajasthan,26.83,73.75,,0,1340000,continuous (year-round),yes
+Sirohi Cement Works,cement,Rajasthan,24.88,72.86,,0,1560000,continuous (year-round),yes
+Porbandar Cement Works,cement,Gujarat,21.64,69.61,,0,1480000,continuous (year-round),yes
+Jamul Cement Works,cement,Chhattisgarh,21.17,81.44,,0,2270000,continuous (year-round),yes
+Sonadih Cement Works,cement,Chhattisgarh,21.74,82.32,,0,1890000,continuous (year-round),yes
+Baloda Bazar Cement Works,cement,Chhattisgarh,21.66,82.16,,0,2540000,continuous (year-round),yes
+Kymore Cement Works,cement,Madhya Pradesh,23.93,80.04,,0,2120000,continuous (year-round),yes
+Maihar Cement Works,cement,Madhya Pradesh,24.26,80.76,,0,2680000,continuous (year-round),yes
+Damoh Cement Works,cement,Madhya Pradesh,23.83,79.44,,0,1430000,continuous (year-round),yes
+Neemuch Cement Works,cement,Madhya Pradesh,24.47,74.87,,0,1250000,continuous (year-round),yes
+Rajgangpur Cement Works,cement,Odisha,22.18,84.58,,0,1760000,continuous (year-round),yes
+Jhinkpani Cement Works,cement,Jharkhand,22.43,85.62,,0,1390000,continuous (year-round),yes
+Chaibasa Cement Works,cement,Jharkhand,22.55,85.8,,0,1180000,continuous (year-round),yes
+Shahabad Cement Works,cement,Karnataka,17.13,76.95,,0,2040000,continuous (year-round),yes
+Malkhed Cement Works,cement,Karnataka,17.18,77.15,,0,2310000,continuous (year-round),yes
+Chittapur Cement Works,cement,Karnataka,17.12,77.08,,0,1670000,continuous (year-round),yes
+Dalmiapuram Cement Works,cement,Tamil Nadu,10.78,78.84,,0,2190000,continuous (year-round),yes
+Sankarnagar Cement Works,cement,Tamil Nadu,8.83,77.53,,0,1520000,continuous (year-round),yes
+Alathiyur Cement Works,cement,Tamil Nadu,11.2,79.12,,0,1840000,continuous (year-round),yes
+Bokaro Steel Plant,steel,Jharkhand,23.67,86.15,blast furnace slag,1980000,1520000,continuous (year-round),yes
+Burnpur Steel Works,steel,West Bengal,23.67,86.93,steel slag,420000,610000,continuous (year-round),yes
+Salem Steel Plant,steel,Tamil Nadu,11.66,78.14,mill scale,28000,340000,continuous (year-round),yes
+Vijayanagar Steel Works,steel,Karnataka,15.17,76.65,blast furnace slag,2640000,1940000,continuous (year-round),yes
+Dolvi Steel Works,steel,Maharashtra,18.68,73.01,blast furnace slag,1180000,1360000,continuous (year-round),yes
+Hazira Steel Works,steel,Gujarat,21.1,72.65,blast furnace slag,1420000,1580000,continuous (year-round),yes
+Raigarh Steel Works,steel,Chhattisgarh,21.9,83.4,steel slag,510000,880000,continuous (year-round),yes
+Kalinganagar Steel Works,steel,Odisha,21.0,86.0,blast furnace slag,1260000,1180000,continuous (year-round),yes
+Meramandali Steel Works,steel,Odisha,20.94,85.14,steel slag,480000,920000,continuous (year-round),yes
+Ghaziabad Induction Furnace Cluster,steel,Uttar Pradesh,28.67,77.43,,0,380000,continuous (year-round),yes
+Raipur Steel Cluster,steel,Chhattisgarh,21.28,81.7,,0,620000,continuous (year-round),yes
+Howrah Foundry Cluster,foundry,West Bengal,22.59,88.31,,0,145000,continuous (year-round),no
+Rajkot Foundry Cluster,foundry,Gujarat,22.3,70.8,,0,128000,continuous (year-round),no
+Batala Foundry Cluster,foundry,Punjab,31.81,75.2,,0,86000,continuous (year-round),no
+Agra Foundry Cluster,foundry,Uttar Pradesh,27.18,78.01,,0,74000,continuous (year-round),no
+Belgaum Foundry Cluster,foundry,Karnataka,15.85,74.5,,0,96000,continuous (year-round),no
+Korba Aluminium Smelter,aluminium,Chhattisgarh,22.36,82.7,spent pot lining,17000,420000,continuous (year-round),yes
+Hirakud Aluminium Smelter,aluminium,Odisha,21.52,83.87,spent pot lining,11000,290000,continuous (year-round),yes
+Damanjodi Alumina Refinery,aluminium,Odisha,18.77,82.93,red mud,1120000,480000,continuous (year-round),yes
+Muri Alumina Refinery,aluminium,Jharkhand,23.37,85.87,red mud,640000,310000,continuous (year-round),yes
+Belgaum Alumina Refinery,aluminium,Karnataka,15.85,74.5,red mud,380000,240000,continuous (year-round),yes
+Vadodara Refinery,refinery,Gujarat,22.35,73.18,recovered sulphur,118000,540000,continuous (year-round),yes
+Panipat Refinery,refinery,Haryana,29.32,76.97,recovered sulphur,142000,610000,continuous (year-round),yes
+Barauni Refinery,refinery,Bihar,25.47,86.0,recovered sulphur,68000,380000,continuous (year-round),yes
+Haldia Refinery,refinery,West Bengal,22.03,88.06,spent catalyst,2600,420000,continuous (year-round),yes
+Paradip Refinery,refinery,Odisha,20.27,86.61,recovered sulphur,156000,580000,continuous (year-round),yes
+Bina Refinery,refinery,Madhya Pradesh,24.18,78.2,recovered sulphur,74000,360000,continuous (year-round),yes
+Manali Refinery,refinery,Tamil Nadu,13.16,80.26,spent catalyst,1900,340000,continuous (year-round),yes
+Visakh Refinery,refinery,Andhra Pradesh,17.69,83.22,recovered sulphur,92000,450000,continuous (year-round),yes
+Mangalore Refinery,refinery,Karnataka,12.94,74.83,recovered sulphur,105000,470000,continuous (year-round),yes
+Numaligarh Refinery,refinery,Assam,26.62,93.75,recovered sulphur,38000,210000,continuous (year-round),yes
+Bongaigaon Refinery,refinery,Assam,26.48,90.56,spent catalyst,1200,180000,continuous (year-round),yes
+Sindri Fertiliser Complex,fertiliser,Jharkhand,23.67,86.5,process CO2,96000,410000,continuous (year-round),yes
+Phulpur Fertiliser Complex,fertiliser,Uttar Pradesh,25.55,82.05,process CO2,82000,360000,continuous (year-round),yes
+Aonla Fertiliser Complex,fertiliser,Uttar Pradesh,28.27,79.17,process CO2,88000,390000,continuous (year-round),yes
+Kalol Fertiliser Complex,fertiliser,Gujarat,23.25,72.5,process CO2,64000,280000,continuous (year-round),yes
+Bharuch Chemical Complex,chemicals,Gujarat,21.71,72.99,,0,240000,continuous (year-round),yes
+Ankleshwar Chemical Estate,chemicals,Gujarat,21.63,73.0,,0,185000,continuous (year-round),yes
+Dahej Chemical Complex,chemicals,Gujarat,21.71,72.59,,0,210000,continuous (year-round),yes
+Bijnor Sugar Mill,sugar,Uttar Pradesh,29.37,78.13,bagasse,280000,0,crushing season (Nov-Apr),no
+Lakhimpur Sugar Mill,sugar,Uttar Pradesh,27.95,80.78,bagasse,340000,0,crushing season (Nov-Apr),no
+Bareilly Sugar Mill,sugar,Uttar Pradesh,28.37,79.43,press mud,62000,0,crushing season (Nov-Apr),no
+Gorakhpur Sugar Mill,sugar,Uttar Pradesh,26.76,83.37,molasses,74000,0,crushing season (Nov-Apr),no
+Ahmednagar Sugar Complex,sugar,Maharashtra,19.09,74.75,bagasse,310000,0,crushing season (Nov-Apr),no
+Satara Sugar Complex,sugar,Maharashtra,17.68,74.02,press mud,58000,0,crushing season (Nov-Apr),no
+Sangli Sugar Complex,sugar,Maharashtra,16.85,74.58,bagasse,290000,0,crushing season (Nov-Apr),no
+Solapur Sugar Complex,sugar,Maharashtra,17.66,75.91,molasses,68000,0,crushing season (Nov-Apr),no
+Mandya Sugar Mill,sugar,Karnataka,12.52,76.9,bagasse,240000,0,crushing season (Nov-Apr),no
+Bagalkot Sugar Mill,sugar,Karnataka,16.18,75.7,press mud,54000,0,crushing season (Nov-Apr),no
+Bidar Sugar Mill,sugar,Karnataka,17.91,77.52,bagasse,210000,0,crushing season (Nov-Apr),no
+Baramati Distillery,distillery,Maharashtra,18.15,74.58,,0,120000,continuous (year-round),yes
+Sangrur Ethanol Plant,distillery,Punjab,30.25,75.84,,0,142000,continuous (year-round),yes
+Nizamabad Distillery,distillery,Telangana,18.67,78.1,,0,98000,continuous (year-round),yes
+Sangrur Rice Mill Cluster,rice mill,Punjab,30.25,75.84,rice husk,118000,0,kharif milling (Oct-Jan),no
+Patiala Rice Mill Cluster,rice mill,Punjab,30.34,76.39,rice husk,104000,0,kharif milling (Oct-Jan),no
+Kaithal Rice Mill Cluster,rice mill,Haryana,29.8,76.4,rice husk,96000,0,kharif milling (Oct-Jan),no
+Bardhaman Rice Mill Cluster,rice mill,West Bengal,23.23,87.86,rice husk,88000,0,kharif milling (Oct-Jan),no
+Cuttack Rice Mill Cluster,rice mill,Odisha,20.46,85.88,rice husk ash,19000,0,kharif milling (Oct-Jan),no
+Nizamabad Rice Mill Cluster,rice mill,Telangana,18.67,78.1,rice husk,82000,0,kharif milling (Oct-Jan),no
+Thanjavur Rice Mill Cluster,rice mill,Tamil Nadu,10.79,79.14,rice husk,76000,0,kharif milling (Oct-Jan),no
+Sangrur Agri Cooperative,agriculture,Punjab,30.24,75.83,,0,105000,rabi sowing (Oct-Mar),no
+Nizamabad Farmer Cooperative,agriculture,Telangana,18.66,78.09,,0,88000,kharif sowing (Jun-Oct),no
+Nagaon Paper Mill,paper,Assam,26.35,92.68,lime sludge,24000,195000,continuous (year-round),yes
+Kagajnagar Paper Mill,paper,Telangana,19.33,79.28,paper sludge,26000,215000,continuous (year-round),yes
+Saharanpur Paper Mill,paper,Uttar Pradesh,29.96,77.55,paper sludge,31000,240000,continuous (year-round),yes
+Karur Paper Mill,paper,Tamil Nadu,10.96,78.08,lime sludge,21000,175000,continuous (year-round),yes
+Surat Textile Cluster,textile,Gujarat,21.17,72.83,textile ETP sludge,52000,240000,continuous (year-round),no
+Ahmedabad Textile Cluster,textile,Gujarat,23.02,72.57,cotton waste,41000,195000,continuous (year-round),no
+Ichalkaranji Textile Cluster,textile,Maharashtra,16.7,74.46,cotton waste,28000,142000,continuous (year-round),no
+Salem Textile Cluster,textile,Tamil Nadu,11.66,78.15,cotton waste,24000,118000,continuous (year-round),no
+Panipat Recycled Textile Cluster,textile,Haryana,29.39,76.96,,0,164000,continuous (year-round),no
+Firozabad Glass Recovery Unit,waste management,Uttar Pradesh,27.15,78.39,glass cullet,48000,0,continuous (year-round),no
+Kolkata Glass Works,glass,West Bengal,22.57,88.36,,0,142000,continuous (year-round),no
+Bengaluru Glass Works,glass,Karnataka,12.98,77.58,,0,126000,continuous (year-round),no
+Pune MSW RDF Plant,waste management,Maharashtra,18.53,73.87,RDF,142000,0,continuous (year-round),yes
+Delhi MSW RDF Plant,waste management,Delhi,28.61,77.23,RDF,186000,0,continuous (year-round),yes
+Chennai C and D Waste Facility,waste management,Tamil Nadu,13.08,80.27,C&D waste,420000,0,continuous (year-round),no
+Bengaluru C and D Waste Facility,waste management,Karnataka,12.96,77.6,C&D waste,380000,0,continuous (year-round),no
+Mumbai C and D Waste Facility,waste management,Maharashtra,19.08,72.88,C&D waste,510000,0,continuous (year-round),no
+Chennai Tyre Recycling Unit,waste management,Tamil Nadu,13.05,80.22,waste tyres,38000,0,continuous (year-round),yes
+Jaipur AAC Block Plant,construction materials,Rajasthan,26.91,75.79,,0,265000,continuous (year-round),no
+Lucknow AAC Block Plant,construction materials,Uttar Pradesh,26.85,80.95,,0,238000,continuous (year-round),no
+Kolkata Fly Ash Brick Unit,construction materials,West Bengal,22.58,88.34,,0,192000,continuous (year-round),no
+Nagpur Fly Ash Brick Unit,construction materials,Maharashtra,21.15,79.09,,0,176000,continuous (year-round),no
+Patna Fly Ash Brick Unit,construction materials,Bihar,25.6,85.14,,0,154000,continuous (year-round),no
+Hyderabad Ready Mix Concrete Hub,construction materials,Telangana,17.42,78.45,,0,282000,continuous (year-round),no
+Delhi Ready Mix Concrete Hub,construction materials,Delhi,28.63,77.22,,0,310000,continuous (year-round),no
+Bharatmala Package Rajasthan,road project,Rajasthan,26.5,74.5,,0,940000,dry season (Oct-May),no
+Bharatmala Package Bihar,road project,Bihar,25.4,85.5,,0,780000,dry season (Oct-May),no
+Chennai Peripheral Ring Road,road project,Tamil Nadu,12.95,80.15,,0,660000,dry season (Oct-May),no
+Bengaluru Peripheral Ring Road,road project,Karnataka,13.05,77.65,,0,720000,dry season (Oct-May),no
+Delhi Mumbai Expressway Package MP,road project,Madhya Pradesh,23.8,76.5,,0,1080000,dry season (Oct-May),no
+Ganga Expressway Package UP,road project,Uttar Pradesh,27.2,80.0,,0,1150000,dry season (Oct-May),no
+Karnal Dairy Plant,dairy,Haryana,29.69,76.99,whey,42000,0,flush season (Oct-Feb),no
+Bengaluru Dairy Plant,dairy,Karnataka,12.99,77.57,whey,38000,0,flush season (Oct-Feb),no
+Nashik Brewery,brewery,Maharashtra,20.01,73.78,spent grain,26000,0,peak season (Mar-Jun),no
+Bengaluru Brewery,brewery,Karnataka,12.95,77.62,spent grain,29000,0,peak season (Mar-Jun),no
+Hyderabad Used Cooking Oil Aggregator,food service,Telangana,17.39,78.48,used cooking oil,9200,0,continuous (year-round),no
+Delhi Used Cooking Oil Aggregator,food service,Delhi,28.65,77.21,used cooking oil,13500,0,continuous (year-round),no
+Mumbai Biodiesel Unit,biodiesel,Maharashtra,19.04,72.86,,0,38000,continuous (year-round),yes
+Bengaluru Beverage Bottling Plant,beverage,Karnataka,12.94,77.55,,0,42000,peak season (Mar-Jun),no
+Kanpur Cattle Feed Plant,feed,Uttar Pradesh,26.46,80.32,,0,58000,continuous (year-round),no
+Anand Cattle Feed Plant,feed,Gujarat,22.55,72.93,,0,72000,continuous (year-round),no
+Gorakhpur Compressed Biogas Plant,CBG plant,Uttar Pradesh,26.75,83.36,,0,76000,continuous (year-round),no
+Kolhapur Compressed Biogas Plant,CBG plant,Maharashtra,16.71,74.25,,0,68000,continuous (year-round),no
+Perumbavoor Wood Panel Cluster,wood panel,Kerala,10.11,76.48,,0,168000,continuous (year-round),no
+Bareilly Wood Panel Cluster,wood panel,Uttar Pradesh,28.36,79.42,,0,134000,continuous (year-round),no
+Haldwani Sawmill Cluster,sawmill,Uttarakhand,29.22,79.52,sawdust,22000,0,continuous (year-round),no
+Guwahati Sawmill Cluster,sawmill,Assam,26.14,91.74,sawdust,18000,0,continuous (year-round),no
+Mandi Gobindgarh Scrap Yard,metal recovery,Punjab,30.66,76.3,ferrous scrap,96000,38000,continuous (year-round),yes
+Jamshedpur Scrap Processing Yard,metal recovery,Jharkhand,22.79,86.19,ferrous scrap,84000,32000,continuous (year-round),yes
+Ankleshwar Metal Recovery Unit,metal recovery,Gujarat,21.63,73.01,,0,26000,continuous (year-round),yes
+Chennai Metal Recovery Unit,metal recovery,Tamil Nadu,13.1,80.24,,0,22000,continuous (year-round),yes
+Chanderiya Lead Zinc Smelter,zinc,Rajasthan,24.91,74.65,jarosite,185000,160000,continuous (year-round),yes
+Kanpur Leather Cluster,leather,Uttar Pradesh,26.46,80.34,chrome tanning sludge,21000,0,continuous (year-round),yes
+Vellore Leather Cluster,leather,Tamil Nadu,12.92,79.13,chrome tanning sludge,18000,0,continuous (year-round),yes
