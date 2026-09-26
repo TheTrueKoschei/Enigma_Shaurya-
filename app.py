@@ -18,6 +18,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import blending
+import carbon
 import conformance
 import engine
 import explain
@@ -418,11 +419,11 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-(tab_grading, tab_blend, tab_mine, tab_network, tab_matches, tab_chains,
- tab_gaps, tab_method) = st.tabs([
-    ui.tr("tab_grading"), ui.tr("tab_blend"), ui.tr("tab_mine"),
-    ui.tr("tab_network"), ui.tr("tab_matches"), ui.tr("tab_chains"),
-    ui.tr("tab_gaps"), ui.tr("tab_method"),
+(tab_grading, tab_blend, tab_carbon, tab_mine, tab_network, tab_matches,
+ tab_chains, tab_gaps, tab_method) = st.tabs([
+    ui.tr("tab_grading"), ui.tr("tab_blend"), ui.tr("tab_carbon"),
+    ui.tr("tab_mine"), ui.tr("tab_network"), ui.tr("tab_matches"),
+    ui.tr("tab_chains"), ui.tr("tab_gaps"), ui.tr("tab_method"),
 ])
 
 QUALIFY_COLOUR = ui.SUPPLIER_COLOUR       # navy - qualifies
@@ -852,6 +853,159 @@ with tab_blend:
         'also require - lime reactivity, soundness, strength activity index - '
         'which cannot be predicted from an assay. A feasible blend here is a '
         'candidate for a trial mix, not a certificate.</p>',
+        unsafe_allow_html=True,
+    )
+
+# ======================================================================
+# 0c. Carbon and CCTS
+# ======================================================================
+
+with tab_carbon:
+    ui.breadcrumb("tab_carbon")
+    st.markdown(f'<div class="sect">{ui.tr("cb_heading")}</div>',
+                unsafe_allow_html=True)
+    st.markdown(
+        '<p class="sub">India\'s Carbon Credit Trading Scheme sets '
+        '<strong>intensity</strong> targets - tCO2e per tonne of product - not '
+        'absolute caps. Raising the supplementary cementitious share lowers the '
+        'clinker factor, which lowers the intensity the plant is legally measured '
+        'on. That is why a by-product is worth more than the clinker it displaces: '
+        'it also moves the plant\'s compliance position.</p>',
+        unsafe_allow_html=True,
+    )
+
+    c1, c2 = st.columns([1.4, 2])
+    receiving = c1.selectbox(ui.tr("cb_plant"), carbon.plants(), index=1,
+                             key="carbon_plant")
+    price = c2.slider(ui.tr("cb_price"), min_value=500, max_value=6000,
+                      value=int(carbon.DEFAULT_CERTIFICATE_PRICE), step=100,
+                      key="carbon_price",
+                      help="Indian certificate trading has no settled price yet. "
+                           "Every rupee figure on this tab moves with this slider - "
+                           "it is an assumption, not a forecast.")
+
+    profile = carbon.plant(receiving) or {}
+    baseline = carbon.assess(receiving, profile.get("baseline_scm_share", 0.0), price)
+
+    # Sourcing options. SCM share is raised to 35%, the IS 1489 ceiling for fly
+    # ash in PPC, for every option that can supply it.
+    TARGET_SHARE = 0.35
+    SPEC = "Fly ash for structural concrete (IS 3812 Part 1)"
+    good_ash, poor_ash = "Fly ash (Vindhyachal STPS)", "Fly ash (Talcher TPS)"
+    mix = blending.blend_to_spec(poor_ash, good_ash, SPEC)
+
+    def margin_of(report):
+        if report["binding"] is None or report["binding"]["headroom_frac"] is None:
+            return None
+        return report["binding"]["headroom_frac"] * 100
+
+    grade_good = conformance.grade(good_ash, SPEC)
+    grade_poor = conformance.grade(poor_ash, SPEC)
+
+    options = [
+        {"label": "Stay on clinker (no change)",
+         "scm_share": profile.get("baseline_scm_share", 0.0),
+         "cost_inr_t": 4200, "quality_margin": None, "meets_spec": True},
+        {"label": f"Take {good_ash} to 35%", "scm_share": TARGET_SHARE,
+         "cost_inr_t": 1150, "quality_margin": margin_of(grade_good),
+         "meets_spec": grade_good["passes"]},
+        {"label": f"Take {poor_ash} to 35%", "scm_share": TARGET_SHARE,
+         "cost_inr_t": 700, "quality_margin": margin_of(grade_poor),
+         "meets_spec": grade_poor["passes"]},
+    ]
+    if mix["feasible"]:
+        f = mix["f_recommended"]
+        options.append({
+            "label": f"Take the {f:.0%}/{1 - f:.0%} blend to 35%",
+            "scm_share": TARGET_SHARE,
+            "cost_inr_t": round(f * 700 + (1 - f) * 1150),
+            "quality_margin": margin_of(mix["report"]),
+            "meets_spec": mix["report"]["passes"],
+        })
+
+    rows = carbon.compare_options(receiving, options, price)
+    chosen = carbon.assess(receiving, TARGET_SHARE, price)
+
+    ui.stat_row([
+        ui.stat_block("Baseline intensity", f'{baseline["actual_gei"]:.3f}',
+                      f'tCO2e/t at {baseline["baseline_scm_share"]:.0%} SCM'),
+        ui.stat_block("Target intensity", f'{baseline["target_gei"]:.3f}',
+                      "tCO2e/t under CCTS"),
+        ui.stat_block("Intensity at 35% SCM", f'{chosen["actual_gei"]:.3f}',
+                      f'{chosen["intensity_reduction"]:.3f} lower'),
+        ui.stat_block(ui.tr("cb_position"),
+                      f'{chosen["certificates"]:,.0f}',
+                      "certificates earned" if chosen["compliant"]
+                      else "certificate shortfall",
+                      bad=not chosen["compliant"]),
+        ui.stat_block("Value of the change", engine.inr(chosen["value_of_change_inr"]),
+                      f'at Rs {price:,}/tCO2e'),
+    ], columns=5)
+
+    if baseline["compliant"]:
+        position = (f'At its current {baseline["baseline_scm_share"]:.0%} SCM share '
+                    f'{receiving} already beats its target and earns '
+                    f'{baseline["certificates"]:,.0f} certificates. Raising the share '
+                    f'to 35% takes that to {chosen["certificates"]:,.0f}.')
+    else:
+        position = (f'At its current {baseline["baseline_scm_share"]:.0%} SCM share '
+                    f'{receiving} misses its target by '
+                    f'{abs(baseline["certificates"]):,.0f} tCO2e a year - a liability of '
+                    f'{engine.inr(abs(baseline["exposure_at_penalty_inr"]))} at the '
+                    f'doubled penalty rate. Raising the share to 35% moves it to '
+                    f'{chosen["certificates"]:,.0f} certificates, '
+                    f'{"in compliance" if chosen["compliant"] else "still short"}.')
+    st.markdown(f'<div class="note{"" if chosen["compliant"] else " loss"}">{position}</div>',
+                unsafe_allow_html=True)
+
+    st.markdown(f'<div class="sect">{ui.tr("cb_options")}</div>',
+                unsafe_allow_html=True)
+    st.dataframe(
+        pd.DataFrame([{
+            "option": r["option"],
+            "SCM share": r["scm_share"],
+            "delivered Rs/t": r["cost_inr_t"],
+            "meets spec": "yes" if r["meets_spec"] else "NO",
+            "quality margin %": r["quality_margin"],
+            "tCO2e/yr": r["co2_t_yr"],
+            "CO2 avoided t/yr": r["co2_avoided_t_yr"],
+            "certificates": r["certificates"],
+            "CCTS position Rs/yr": r["position_inr"],
+        } for r in rows]),
+        hide_index=True, width="stretch",
+        column_config={
+            "option": st.column_config.TextColumn("Option", width="large"),
+            "SCM share": st.column_config.NumberColumn("SCM share", format="%.0f%%",
+                                                       width="small"),
+            "delivered Rs/t": st.column_config.NumberColumn("Delivered Rs/t",
+                                                            format="%.0f"),
+            "meets spec": st.column_config.TextColumn("Meets IS 3812", width="small"),
+            "quality margin %": st.column_config.NumberColumn(
+                "Quality margin %", format="%.1f",
+                help="Headroom on the binding property against IS 3812 Part 1. "
+                     "Negative means the stream is outside the standard."),
+            "tCO2e/yr": st.column_config.NumberColumn("tCO2e/yr", format="%.0f"),
+            "CO2 avoided t/yr": st.column_config.NumberColumn("CO2 avoided t/yr",
+                                                              format="%.0f"),
+            "certificates": st.column_config.NumberColumn("Certificates",
+                                                          format="%.0f"),
+            "CCTS position Rs/yr": st.column_config.NumberColumn("CCTS position Rs/yr",
+                                                                 format="%.0f"),
+        },
+    )
+    st.markdown(
+        f'<p class="caveat">The SCM share is raised to 35%, the ceiling IS 1489 '
+        'allows for fly ash in Portland pozzolana cement. The cheapest stream is '
+        'the one that does not meet IS 3812 - which is the whole point of reading '
+        'the quality margin and the cost in the same table. '
+        f'<strong>{carbon.SCHEME_NOTES}</strong></p>'
+        f'<p class="caveat">Intensity model: clinker factor = 1 - SCM share - '
+        f'{carbon.GYPSUM_SHARE:.0%} gypsum, at '
+        f'{carbon.CLINKER_EMISSION_FACTOR} tCO2/t clinker (about 0.53 from '
+        'limestone calcination, which no fuel switch removes, plus kiln fuel), '
+        f'plus {carbon.CEMENT_OTHER_EMISSIONS} tCO2/t for grinding power. Those '
+        'are published sector averages, not this plant\'s verified figures, and '
+        f'the target shown is illustrative. {profile.get("note", "")}</p>',
         unsafe_allow_html=True,
     )
 

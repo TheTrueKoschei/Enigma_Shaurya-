@@ -36,6 +36,7 @@ STRINGS = {
     # --- tabs ---
     "tab_grading": {"en": "Material Grading", "hi": "सामग्री श्रेणीकरण"},
     "tab_blend": {"en": "Blend to Spec", "hi": "मिश्रण द्वारा अनुपालन"},
+    "tab_carbon": {"en": "Carbon & CCTS", "hi": "कार्बन और CCTS"},
     "tab_mine": {"en": "Find My Matches", "hi": "मेरे मिलान खोजें"},
     "tab_network": {"en": "Exchange Network", "hi": "विनिमय नेटवर्क"},
     "tab_matches": {"en": "Ranked Matches", "hi": "क्रमित मिलान"},
@@ -164,6 +165,15 @@ STRINGS = {
     "bl_recommended": {"en": "Recommended blend", "hi": "अनुशंसित मिश्रण"},
     "bl_before_after": {"en": "Before and after", "hi": "पहले और बाद"},
     "bl_ladder": {"en": "Value ladder", "hi": "मूल्य सोपान"},
+
+    # --- carbon ---
+    "cb_heading": {"en": "Substitution as a compliance lever, not only a saving",
+                   "hi": "प्रतिस्थापन: केवल बचत नहीं, अनुपालन का साधन"},
+    "cb_plant": {"en": "Receiving plant", "hi": "प्राप्तकर्ता संयंत्र"},
+    "cb_price": {"en": "Certificate price (assumption)",
+                 "hi": "प्रमाणपत्र मूल्य (मान्यता)"},
+    "cb_options": {"en": "Sourcing options compared", "hi": "स्रोत विकल्पों की तुलना"},
+    "cb_position": {"en": "CCTS position", "hi": "CCTS स्थिति"},
 
     # --- method ---
     "method_scoring": {"en": "How a match is scored", "hi": "मिलान का अंकन कैसे होता है"},

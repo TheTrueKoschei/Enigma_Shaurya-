@@ -396,3 +396,94 @@ def test_blend_is_deterministic():
 def test_both_a_feasible_and_an_infeasible_pair_exist_to_demonstrate():
     assert blending.blend_to_spec(TALCHER, VINDHYACHAL, IS3812_P1)["feasible"]
     assert not blending.blend_to_spec(RED_MUD, BOTTOM_ASH, IS3812_P1)["feasible"]
+
+
+# ----------------------------------------------------------------------
+# Carbon intensity and CCTS
+# ----------------------------------------------------------------------
+
+import carbon
+
+
+def test_raising_the_scm_share_lowers_the_intensity_monotonically():
+    shares = [0.0, 0.10, 0.20, 0.30, 0.40, 0.50]
+    intensities = [carbon.cement_intensity(s) for s in shares]
+    assert intensities == sorted(intensities, reverse=True)
+    assert all(i > 0 for i in intensities)
+
+
+def test_intensity_matches_the_stated_clinker_model():
+    share = 0.30
+    clinker_factor = 1.0 - carbon.GYPSUM_SHARE - share
+    expected = (clinker_factor * carbon.CLINKER_EMISSION_FACTOR
+                + carbon.CEMENT_OTHER_EMISSIONS)
+    assert carbon.cement_intensity(share) == pytest.approx(expected)
+
+
+def test_scm_share_is_clamped_to_something_physical():
+    """Gypsum still has to be in the cement, so the share cannot reach 1.0."""
+    assert carbon.cement_intensity(1.5) == carbon.cement_intensity(1.0 - carbon.GYPSUM_SHARE)
+    assert carbon.cement_intensity(-0.2) == carbon.cement_intensity(0.0)
+
+
+def test_certificates_are_the_intensity_gap_times_production():
+    result = carbon.assess("Satna Cement Works", 0.35)
+    entry = carbon.plant("Satna Cement Works")
+    expected = ((entry["target_gei"] - carbon.cement_intensity(0.35))
+                * entry["annual_production_t"])
+    assert result["certificates"] == pytest.approx(expected)
+
+
+def test_a_plant_can_move_from_shortfall_into_compliance():
+    """The story the tab tells has to be true of the numbers."""
+    before = carbon.assess("Satna Cement Works", 0.18)
+    after = carbon.assess("Satna Cement Works", 0.35)
+    assert not before["compliant"] and before["certificates"] < 0
+    assert after["compliant"] and after["certificates"] > 0
+    assert after["co2_avoided_t"] > 0
+
+
+def test_shortfall_exposure_uses_the_doubled_penalty():
+    short = carbon.assess("Satna Cement Works", 0.18, certificate_price=2000)
+    assert short["certificates"] < 0
+    assert short["exposure_at_penalty_inr"] == pytest.approx(
+        short["certificates"] * 2000 * carbon.PENALTY_MULTIPLE)
+    # a compliant plant has no penalty exposure
+    good = carbon.assess("Satna Cement Works", 0.35, certificate_price=2000)
+    assert good["exposure_at_penalty_inr"] == 0.0
+
+
+def test_every_rupee_figure_scales_with_the_price_assumption():
+    """No rupee number may be baked in - the price is an assumption, not a fact."""
+    low = carbon.assess("Satna Cement Works", 0.35, certificate_price=1000)
+    high = carbon.assess("Satna Cement Works", 0.35, certificate_price=2000)
+    assert high["position_inr"] == pytest.approx(2 * low["position_inr"])
+    assert high["value_of_change_inr"] == pytest.approx(2 * low["value_of_change_inr"])
+    # the physical quantities must not move with the price
+    assert low["actual_gei"] == high["actual_gei"]
+    assert low["co2_avoided_t"] == high["co2_avoided_t"]
+    assert low["certificates"] == high["certificates"]
+
+
+def test_compare_options_returns_one_row_per_option():
+    options = [
+        {"label": "baseline", "scm_share": 0.18, "cost_inr_t": 4200,
+         "quality_margin": None, "meets_spec": True},
+        {"label": "blended ash", "scm_share": 0.35, "cost_inr_t": 900,
+         "quality_margin": 0.7, "meets_spec": True},
+    ]
+    rows = carbon.compare_options("Satna Cement Works", options)
+    assert len(rows) == 2
+    assert rows[1]["co2_t_yr"] < rows[0]["co2_t_yr"]
+    assert rows[1]["certificates"] > rows[0]["certificates"]
+
+
+def test_unknown_plant_is_safe():
+    assert carbon.assess("no such plant", 0.3)["found"] is False
+    assert carbon.compare_options("no such plant", [{"label": "x", "scm_share": 0.3}]) == []
+
+
+def test_assess_is_deterministic():
+    first = carbon.assess("Wadi Cement Plant", 0.32, 2500)
+    second = carbon.assess("Wadi Cement Plant", 0.32, 2500)
+    assert first == second
