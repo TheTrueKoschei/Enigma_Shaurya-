@@ -35,6 +35,7 @@ STRINGS = {
 
     # --- tabs ---
     "tab_grading": {"en": "Material Grading", "hi": "सामग्री श्रेणीकरण"},
+    "tab_blend": {"en": "Blend to Spec", "hi": "मिश्रण द्वारा अनुपालन"},
     "tab_mine": {"en": "Find My Matches", "hi": "मेरे मिलान खोजें"},
     "tab_network": {"en": "Exchange Network", "hi": "विनिमय नेटवर्क"},
     "tab_matches": {"en": "Ranked Matches", "hi": "क्रमित मिलान"},
@@ -149,8 +150,20 @@ STRINGS = {
                      "hi": "योग्य अनुप्रयोग"},
     "mg_best": {"en": "Best qualifying use", "hi": "सर्वोत्तम योग्य उपयोग"},
     "mg_discount": {"en": "Quality discount", "hi": "गुणवत्ता छूट"},
+    "mg_ladder": {"en": "Value ladder", "hi": "मूल्य सोपान"},
     "mg_upgrade": {"en": "Closest rung not yet reached",
                    "hi": "निकटतम अप्राप्त स्तर"},
+
+    # --- blending ---
+    "bl_heading": {"en": "Reach a specification by blending two streams",
+                   "hi": "दो धाराओं के मिश्रण से विनिर्देश प्राप्त करें"},
+    "bl_stream_a": {"en": "Stream A", "hi": "धारा A"},
+    "bl_stream_b": {"en": "Stream B", "hi": "धारा B"},
+    "bl_target": {"en": "Target specification", "hi": "लक्ष्य विनिर्देश"},
+    "bl_feasible": {"en": "Feasible blend range", "hi": "संभाव्य मिश्रण परास"},
+    "bl_recommended": {"en": "Recommended blend", "hi": "अनुशंसित मिश्रण"},
+    "bl_before_after": {"en": "Before and after", "hi": "पहले और बाद"},
+    "bl_ladder": {"en": "Value ladder", "hi": "मूल्य सोपान"},
 
     # --- method ---
     "method_scoring": {"en": "How a match is scored", "hi": "मिलान का अंकन कैसे होता है"},

@@ -270,3 +270,129 @@ def test_every_material_cascades_without_error():
         ladder = conformance.cascade(name)
         assert len(ladder["rungs"]) == len(specs.SPECS)
         assert ladder["quality_discount"] >= 0
+
+
+# ----------------------------------------------------------------------
+# Blending
+# ----------------------------------------------------------------------
+
+import blending
+
+TALCHER = "Fly ash (Talcher TPS)"
+VINDHYACHAL = "Fly ash (Vindhyachal STPS)"
+RED_MUD = "Red mud (Lanjigarh alumina refinery)"
+BOTTOM_ASH = "Bottom ash (Singrauli STPS)"
+
+
+def test_blend_at_the_endpoints_reduces_to_the_pure_materials():
+    """f = 1 must be pure A and f = 0 pure B, or the mixing maths is wrong."""
+    a = materials.measured_properties(TALCHER)
+    b = materials.measured_properties(VINDHYACHAL)
+    at_one = blending.blend_properties(a, b, 1.0)
+    at_zero = blending.blend_properties(a, b, 0.0)
+    for key in set(a) & set(b):
+        assert at_one[key] == pytest.approx(a[key]), key
+        assert at_zero[key] == pytest.approx(b[key]), key
+
+
+def test_blend_is_linear_in_the_mass_fraction():
+    a = materials.measured_properties(TALCHER)
+    b = materials.measured_properties(VINDHYACHAL)
+    half = blending.blend_properties(a, b, 0.5)
+    for key in set(a) & set(b):
+        assert half[key] == pytest.approx((a[key] + b[key]) / 2.0), key
+    quarter = blending.blend_properties(a, b, 0.25)
+    for key in set(a) & set(b):
+        assert quarter[key] == pytest.approx(0.25 * a[key] + 0.75 * b[key]), key
+
+
+def test_a_failing_ash_can_be_blended_into_specification():
+    """The demonstration case: neither trucking nor processing, just chemistry."""
+    assert not conformance.grade(TALCHER, IS3812_P1)["passes"]
+    assert conformance.grade(VINDHYACHAL, IS3812_P1)["passes"]
+
+    result = blending.blend_to_spec(TALCHER, VINDHYACHAL, IS3812_P1)
+    assert result["feasible"]
+    assert 0.0 < result["f_recommended"] <= result["f_max"]
+    assert result["report"]["passes"], "the recommended blend must actually pass"
+
+
+def test_the_recommendation_maximises_the_stream_that_needs_rescuing():
+    """Recommending 0% of the problem stream would create nothing."""
+    result = blending.blend_to_spec(TALCHER, VINDHYACHAL, IS3812_P1)
+    assert result["favoured"] == TALCHER
+    assert result["f_recommended"] >= result["f_max"] - blending.STEP - 1e-9
+    assert result["f_recommended"] > 0.4, "should place a substantial share of it"
+
+
+def test_the_recommended_ratio_is_inside_the_feasible_range():
+    for a, b, spec_name in [
+        (TALCHER, VINDHYACHAL, IS3812_P1),
+        (TALCHER, VINDHYACHAL, IS3812_P2),
+        ("Bagasse ash (Kolhapur sugar complex)", VINDHYACHAL, IS3812_P2),
+    ]:
+        result = blending.blend_to_spec(a, b, spec_name)
+        if not result["feasible"]:
+            continue
+        assert result["f_min"] - 1e-9 <= result["f_recommended"] <= result["f_max"] + 1e-9
+        assert 0.0 <= result["f_recommended"] <= 1.0
+
+
+def test_every_limit_holds_across_the_whole_feasible_range():
+    """The interval maths must agree with grading the blend directly."""
+    result = blending.blend_to_spec(TALCHER, VINDHYACHAL, IS3812_P1)
+    assert result["feasible"]
+    a = materials.measured_properties(TALCHER)
+    b = materials.measured_properties(VINDHYACHAL)
+    lo, hi = result["f_min"], result["f_max"]
+    for f in (lo, (lo + hi) / 2.0, hi):
+        blended = blending.blend_properties(a, b, f)
+        report = conformance.grade_properties(blended, IS3812_P1)
+        assert report["passes"], f"blend at f={f:.3f} should satisfy every limit"
+
+
+def test_just_outside_the_feasible_range_actually_fails():
+    """A range that is not tight is not a range."""
+    result = blending.blend_to_spec(TALCHER, VINDHYACHAL, IS3812_P1)
+    assert result["feasible"]
+    a = materials.measured_properties(TALCHER)
+    b = materials.measured_properties(VINDHYACHAL)
+    beyond = result["f_max"] + 0.05
+    if beyond <= 1.0:
+        report = conformance.grade_properties(
+            blending.blend_properties(a, b, beyond), IS3812_P1)
+        assert not report["passes"], "past f_max the blend must fail"
+
+
+def test_an_impossible_blend_names_the_limits_that_block_it():
+    result = blending.blend_to_spec(RED_MUD, BOTTOM_ASH, IS3812_P1)
+    assert not result["feasible"]
+    assert result["blocking"], "an infeasible blend must say which limit stops it"
+    assert result["reason"]
+    for block in result["blocking"]:
+        assert block["property"]
+        assert block["value_a"] is not None or block["value_b"] is not None
+
+
+def test_blending_a_stream_with_itself_is_refused():
+    result = blending.blend_to_spec(TALCHER, TALCHER, IS3812_P1)
+    assert not result["feasible"]
+    assert "different" in result["reason"].lower()
+
+
+def test_blend_of_unknown_material_is_safe():
+    result = blending.blend_to_spec("unobtainium", VINDHYACHAL, IS3812_P1)
+    assert not result["feasible"]
+    assert result["reason"]
+
+
+def test_blend_is_deterministic():
+    first = blending.blend_to_spec(TALCHER, VINDHYACHAL, IS3812_P1)
+    second = blending.blend_to_spec(TALCHER, VINDHYACHAL, IS3812_P1)
+    assert first["f_recommended"] == second["f_recommended"]
+    assert first["f_min"] == second["f_min"] and first["f_max"] == second["f_max"]
+
+
+def test_both_a_feasible_and_an_infeasible_pair_exist_to_demonstrate():
+    assert blending.blend_to_spec(TALCHER, VINDHYACHAL, IS3812_P1)["feasible"]
+    assert not blending.blend_to_spec(RED_MUD, BOTTOM_ASH, IS3812_P1)["feasible"]

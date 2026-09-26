@@ -104,28 +104,20 @@ def check_ratios(spec_name: str, props: dict) -> list:
     return out
 
 
-def grade(material_name: str, spec_name: str) -> dict:
-    """Grade one material against one specification.
+def grade_properties(props: dict, spec_name: str,
+                     material_label: str = "blend") -> dict:
+    """Grade an arbitrary property vector against a specification.
 
-    Returns a dict carrying the verdict and everything behind it:
-      passes    every limit and ratio rule satisfied
-      results   one entry per limit, with required, actual, margin and headroom
-      ratios    ratio rules, reported separately from the limit table
-      failures  the failing entries, worst miss first
-      grade     A  every limit passes with at least 15% headroom
-                B  every limit passes
-                C  one limit fails by less than 20% of the limit
-                D  anything worse, or a property that is not measured
-      binding   the limit closest to its threshold - what actually constrains
-                this material, whether or not it currently passes
+    Separated from grade() so a blended composition - which is not a named
+    material - can be put through exactly the same checks as a real stream.
     """
-    props = materials.measured_properties(material_name)
     entry = specs.spec(spec_name)
     if not props or entry is None:
         return {
-            "material": material_name, "spec": spec_name, "passes": False,
+            "material": material_label, "spec": spec_name, "passes": False,
             "grade": "D", "results": [], "ratios": [], "failures": [],
-            "binding": None, "value_inr_t": 0, "standard": "", "confidence": "",
+            "ratio_failures": [], "binding": None, "value_inr_t": 0,
+            "standard": "", "confidence": "",
             "note": "Material or specification not found.",
         }
 
@@ -152,7 +144,7 @@ def grade(material_name: str, spec_name: str) -> dict:
         letter = "D"
 
     return {
-        "material": material_name,
+        "material": material_label,
         "spec": spec_name,
         "passes": passes,
         "grade": letter,
@@ -166,6 +158,25 @@ def grade(material_name: str, spec_name: str) -> dict:
         "confidence": entry["confidence"],
         "note": entry.get("note", ""),
     }
+
+
+def grade(material_name: str, spec_name: str) -> dict:
+    """Grade one named material against one specification.
+
+    Returns a dict carrying the verdict and everything behind it:
+      passes    every limit and ratio rule satisfied
+      results   one entry per limit, with required, actual, margin and headroom
+      ratios    ratio rules, reported separately from the limit table
+      failures  the failing entries, worst miss first
+      grade     A  every limit passes with at least 15% headroom
+                B  every limit passes
+                C  one limit fails by less than 20% of the limit
+                D  anything worse, or a property that is not measured
+      binding   the limit closest to its threshold - what actually constrains
+                this material, whether or not it currently passes
+    """
+    return grade_properties(materials.measured_properties(material_name),
+                            spec_name, material_label=material_name)
 
 
 def grade_all(material_name: str) -> list:

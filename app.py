@@ -17,6 +17,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+import blending
 import conformance
 import engine
 import explain
@@ -417,12 +418,15 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-(tab_grading, tab_mine, tab_network, tab_matches, tab_chains,
+(tab_grading, tab_blend, tab_mine, tab_network, tab_matches, tab_chains,
  tab_gaps, tab_method) = st.tabs([
-    ui.tr("tab_grading"), ui.tr("tab_mine"), ui.tr("tab_network"),
-    ui.tr("tab_matches"), ui.tr("tab_chains"), ui.tr("tab_gaps"),
-    ui.tr("tab_method"),
+    ui.tr("tab_grading"), ui.tr("tab_blend"), ui.tr("tab_mine"),
+    ui.tr("tab_network"), ui.tr("tab_matches"), ui.tr("tab_chains"),
+    ui.tr("tab_gaps"), ui.tr("tab_method"),
 ])
+
+QUALIFY_COLOUR = ui.SUPPLIER_COLOUR       # navy - qualifies
+BLOCKED_COLOUR = "#b9c0cc"                # grey - does not
 
 # ======================================================================
 # 0. Material grading - property vectors against written specifications
@@ -508,6 +512,65 @@ with tab_grading:
     if profile.get("note"):
         st.markdown(f'<div class="note">{profile["note"]}</div>',
                     unsafe_allow_html=True)
+
+    st.markdown(f'<div class="sect">{ui.tr("mg_ladder")}</div>',
+                unsafe_allow_html=True)
+    st.markdown(
+        '<p class="sub">Every application in the library, by what it pays. Solid '
+        'bars are the rungs this stream qualifies for today; grey bars are the '
+        'ones it does not reach. The gap between the highest solid bar and the '
+        'top of the chart is the quality discount - what the stream gives up by '
+        'being what it is.</p>',
+        unsafe_allow_html=True,
+    )
+    rungs = list(reversed(ladder["rungs"]))
+    ladder_fig = go.Figure(go.Bar(
+        x=[r["value_inr_t"] for r in rungs],
+        y=[r["spec"] for r in rungs],
+        orientation="h",
+        marker=dict(color=[QUALIFY_COLOUR if r["passes"] else BLOCKED_COLOUR
+                           for r in rungs], line=dict(width=0)),
+        text=[f'{engine.inr(r["value_inr_t"])}  {"qualifies" if r["passes"] else "grade " + r["grade"]}'
+              for r in rungs],
+        textposition="outside",
+        textfont=dict(size=10),
+        hoverinfo="text",
+        hovertext=[
+            f'<b>{r["spec"]}</b><br>{engine.inr(r["value_inr_t"])}/t'
+            f'<br>{"Qualifies" if r["passes"] else "Does not qualify"} - grade {r["grade"]}'
+            + (f'<br>Binding: {r["binding"]["property"]} '
+               f'({r["binding"]["headroom_frac"] * 100:+.0f}% headroom)'
+               if r["binding"] else "")
+            for r in rungs],
+    ))
+    ladder_fig.update_layout(
+        height=30 * len(rungs) + 90, margin=dict(l=0, r=90, t=6, b=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#ffffff", font=CHART_FONT,
+        xaxis=dict(title="value of the application, Rs per tonne",
+                   gridcolor="#e4e7ec", zeroline=False,
+                   range=[0, max(r["value_inr_t"] for r in rungs) * 1.32]),
+        yaxis=dict(gridcolor="rgba(0,0,0,0)", automargin=True),
+        hoverlabel=HOVER_STYLE, showlegend=False, bargap=0.25,
+    )
+    st.plotly_chart(ladder_fig, width="stretch", config={"displaylogo": False})
+
+    if ladder["nearest_upgrade"]:
+        upgrade = ladder["nearest_upgrade"]
+        blockers = [f for f in upgrade["failures"] if f["measured"]]
+        if blockers:
+            worst = max(blockers, key=lambda f: abs(f["headroom_frac"]))
+            st.markdown(
+                f'<div class="note"><strong>{ui.tr("mg_upgrade")}:</strong> '
+                f'{upgrade["spec"]} at {engine.inr(upgrade["value_inr_t"])}/t. '
+                f'It is held back by '
+                f'{materials.PROPERTY_LABELS.get(worst["property"], worst["property"])} - '
+                f'the limit is {worst["operator"]} {worst["threshold"]:g} and this stream '
+                f'measures {worst["actual"]:g}, {abs(worst["headroom_frac"]) * 100:.0f}% '
+                f'outside. Closing that one gap is worth '
+                f'{engine.inr(upgrade["value_inr_t"] - ladder["best_qualifying_value"])} '
+                f'a tonne. Try the {ui.tr("tab_blend")} tab.</div>',
+                unsafe_allow_html=True,
+            )
 
     left, right = st.columns([1, 2.1], gap="medium")
 
@@ -639,6 +702,158 @@ with tab_grading:
         unsafe_allow_html=True,
     )
 
+
+# ======================================================================
+# 0b. Blend to specification
+# ======================================================================
+
+with tab_blend:
+    ui.breadcrumb("tab_blend")
+    st.markdown(f'<div class="sect">{ui.tr("bl_heading")}</div>',
+                unsafe_allow_html=True)
+    st.markdown(
+        '<p class="sub">Every property modelled here mixes linearly by mass, so '
+        'each limit becomes a linear inequality in the blend ratio and can be '
+        'solved exactly. Intersecting all of them gives the range of ratios that '
+        'satisfies the whole specification - or the pair of limits that pull in '
+        'opposite directions and make it impossible. This is value created by '
+        'chemistry rather than by trucking: a stream that fails on its own can '
+        'clear the specification blended, and nothing has to be built.</p>',
+        unsafe_allow_html=True,
+    )
+
+    stream_names = materials.materials()
+    b1, b2, b3 = st.columns(3)
+    blend_a = b1.selectbox(ui.tr("bl_stream_a"), stream_names,
+                           index=stream_names.index("Fly ash (Talcher TPS)"),
+                           key="blend_a")
+    blend_b = b2.selectbox(ui.tr("bl_stream_b"), stream_names,
+                           index=stream_names.index("Fly ash (Vindhyachal STPS)"),
+                           key="blend_b")
+    target = b3.selectbox(ui.tr("bl_target"), specs.specs(),
+                          index=specs.specs().index(
+                              "Fly ash for structural concrete (IS 3812 Part 1)"),
+                          key="blend_spec")
+
+    result = blending.blend_to_spec(blend_a, blend_b, target)
+    alone_a = conformance.grade(blend_a, target)
+    alone_b = conformance.grade(blend_b, target)
+
+    if not result["feasible"]:
+        st.markdown(
+            f'<div class="note loss"><strong>No blend of these two streams meets '
+            f'{target}.</strong> {result["reason"]}</div>',
+            unsafe_allow_html=True,
+        )
+        if result["blocking"]:
+            st.dataframe(
+                pd.DataFrame([{
+                    "property": materials.PROPERTY_LABELS.get(
+                        b["property"], b["property"]),
+                    "required": f'{b["operator"]} {b["threshold"]:g}',
+                    f"{blend_a[:22]}": b["value_a"],
+                    f"{blend_b[:22]}": b["value_b"],
+                    "why": (b["reason"] or
+                            f'satisfied only for blend ratios '
+                            f'{b["lo"]:.0%} to {b["hi"]:.0%}'),
+                } for b in result["blocking"]]),
+                hide_index=True, width="stretch",
+                column_config={
+                    "property": st.column_config.TextColumn("Property",
+                                                            width="medium"),
+                    "required": st.column_config.TextColumn("Required",
+                                                            width="small"),
+                    "why": st.column_config.TextColumn("Why it cannot be met",
+                                                       width="large"),
+                },
+            )
+        st.markdown(
+            '<p class="caveat">Two limits that are each satisfiable on their own '
+            'can still be jointly impossible: one needs more of A and the other '
+            'needs less. That is what the rows above show.</p>',
+            unsafe_allow_html=True,
+        )
+    else:
+        f = result["f_recommended"]
+        report = result["report"]
+        ui.stat_row([
+            ui.stat_block(ui.tr("bl_recommended"),
+                          f'{f:.0%} / {1 - f:.0%}',
+                          f'{blend_a[:26]} / {blend_b[:26]}'),
+            ui.stat_block(ui.tr("bl_feasible"),
+                          f'{result["f_min"]:.0%} - {result["f_max"]:.0%}',
+                          f'mass fraction of {blend_a[:28]}'),
+            ui.stat_block("Blend verdict",
+                          ("PASS grade " + report["grade"]) if report["passes"]
+                          else "FAIL",
+                          target[:44]),
+            ui.stat_block("Value of the target",
+                          engine.inr(report["value_inr_t"]) + " /t",
+                          report["standard"]),
+        ], columns=4)
+
+        headline = (
+            f'<strong>Blend {f:.0%} {blend_a} with {1 - f:.0%} {blend_b} and the '
+            f'mix meets {target}</strong>, at grade {report["grade"]}. '
+        )
+        if not alone_a["passes"] and alone_b["passes"]:
+            headline += (f'{blend_a} cannot meet this specification on its own; '
+                         f'the blend places {f:.0%} of it anyway.')
+        elif not alone_a["passes"] and not alone_b["passes"]:
+            headline += "Neither stream meets it alone."
+        st.markdown(f'<div class="note">{headline}</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<p class="caveat">Ratio chosen by {result["rationale"]}. '
+            'Rounded inward to the nearest 1% so a dosing error cannot push the '
+            'mix outside the specification.</p>',
+            unsafe_allow_html=True,
+        )
+
+        st.markdown(f'<div class="sect">{ui.tr("bl_before_after")}</div>',
+                    unsafe_allow_html=True)
+        props_a = materials.measured_properties(blend_a)
+        props_b = materials.measured_properties(blend_b)
+        rows = []
+        for check in report["results"]:
+            expression = check["property"]
+            value_a, _ = conformance.resolve(expression, props_a)
+            value_b, _ = conformance.resolve(expression, props_b)
+            rows.append({
+                "property": " + ".join(
+                    materials.PROPERTY_LABELS.get(p.strip(), p.strip())
+                    for p in expression.split("+")),
+                "required": f'{check["operator"]} {check["threshold"]:g}',
+                blend_a[:24]: value_a,
+                blend_b[:24]: value_b,
+                "blend": check["actual"],
+                "headroom %": (check["headroom_frac"] * 100
+                               if check["headroom_frac"] is not None else None),
+                "verdict": "PASS" if check["passes"] else "FAIL",
+            })
+        st.dataframe(
+            pd.DataFrame(rows), hide_index=True, width="stretch",
+            column_config={
+                "property": st.column_config.TextColumn("Property", width="medium"),
+                "required": st.column_config.TextColumn("Required", width="small"),
+                blend_a[:24]: st.column_config.NumberColumn(format="%.4g"),
+                blend_b[:24]: st.column_config.NumberColumn(format="%.4g"),
+                "blend": st.column_config.NumberColumn("Blend", format="%.4g"),
+                "headroom %": st.column_config.NumberColumn("Headroom %",
+                                                            format="%.1f",
+                                                            width="small"),
+                "verdict": st.column_config.TextColumn("Verdict", width="small"),
+            },
+        )
+
+    st.markdown(
+        '<p class="caveat"><strong>What this does not prove.</strong> Linear '
+        'mixing is sound for composition and reasonable for fineness and loss on '
+        'ignition. It is not a substitute for the performance tests the standards '
+        'also require - lime reactivity, soundness, strength activity index - '
+        'which cannot be predicted from an assay. A feasible blend here is a '
+        'candidate for a trial mix, not a certificate.</p>',
+        unsafe_allow_html=True,
+    )
 
 # ======================================================================
 # 1. Find my matches
