@@ -17,10 +17,13 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+import conformance
 import engine
 import explain
 import i18n
 import kb
+import materials
+import specs
 import ui
 
 st.set_page_config(
@@ -414,11 +417,228 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-(tab_mine, tab_network, tab_matches, tab_chains,
+(tab_grading, tab_mine, tab_network, tab_matches, tab_chains,
  tab_gaps, tab_method) = st.tabs([
-    ui.tr("tab_mine"), ui.tr("tab_network"), ui.tr("tab_matches"),
-    ui.tr("tab_chains"), ui.tr("tab_gaps"), ui.tr("tab_method"),
+    ui.tr("tab_grading"), ui.tr("tab_mine"), ui.tr("tab_network"),
+    ui.tr("tab_matches"), ui.tr("tab_chains"), ui.tr("tab_gaps"),
+    ui.tr("tab_method"),
 ])
+
+# ======================================================================
+# 0. Material grading - property vectors against written specifications
+# ======================================================================
+
+GRADE_MEANING = {
+    "A": "passes every limit with 15% headroom or more",
+    "B": "passes every limit, but with little margin",
+    "C": "fails one limit by less than 20%",
+    "D": "fails by more than that, or a required property is not measured",
+}
+
+
+def limit_table(report: dict) -> pd.DataFrame:
+    """One row per limit: what was required, what was measured, and the gap."""
+    rows = []
+    for result in report["results"]:
+        prop = result["property"]
+        label = " + ".join(materials.PROPERTY_LABELS.get(p.strip(), p.strip())
+                           for p in prop.split("+"))
+        rows.append({
+            "property": label,
+            "required": f'{result["operator"]} {result["threshold"]:g}',
+            "actual": result["actual"],
+            "margin": result["margin"],
+            "headroom %": (result["headroom_frac"] * 100
+                           if result["headroom_frac"] is not None else None),
+            "verdict": ("PASS" if result["passes"]
+                        else ("NOT MEASURED" if not result["measured"] else "FAIL")),
+            "basis": result["unit_note"],
+        })
+    for ratio in report["ratios"]:
+        rows.append({
+            "property": ratio["expression"],
+            "required": f'> {ratio["threshold"]:g}',
+            "actual": ratio["actual"],
+            "margin": (ratio["actual"] - ratio["threshold"]
+                       if ratio["actual"] is not None else None),
+            "headroom %": None,
+            "verdict": ("PASS" if ratio["passes"]
+                        else ("NOT MEASURED" if not ratio["measured"] else "FAIL")),
+            "basis": ratio["description"],
+        })
+    return pd.DataFrame(rows)
+
+
+with tab_grading:
+    ui.breadcrumb("tab_grading")
+    st.markdown(f'<div class="sect">{ui.tr("mg_heading")}</div>',
+                unsafe_allow_html=True)
+    st.markdown(
+        '<p class="sub">The rest of this portal matches material <em>names</em>. '
+        'This grades a stream on what it is actually made of. Every by-product is '
+        'a vector of measured properties; every application is a written '
+        'specification with numeric limits. A verdict is the arithmetic between '
+        'them, and a failure always names the property, the limit, the measured '
+        'value and the size of the gap.</p>',
+        unsafe_allow_html=True,
+    )
+
+    stream = st.selectbox(ui.tr("mg_pick"), materials.materials(), index=1,
+                          key="grade_material")
+    profile = materials.properties_of(stream) or {}
+    measured = materials.measured_properties(stream)
+    ladder = conformance.cascade(stream)
+
+    ui.stat_row([
+        ui.stat_block(ui.tr("mg_qualifies"),
+                      f'{len(ladder["qualifying"])} / {len(ladder["rungs"])}',
+                      "applications in the library"),
+        ui.stat_block(ui.tr("mg_best"),
+                      engine.inr(ladder["best_qualifying_value"]) + " /t",
+                      (ladder["best_qualifying"]["spec"][:46]
+                       if ladder["best_qualifying"] else "nothing in the library")),
+        ui.stat_block(ui.tr("mg_discount"),
+                      engine.inr(ladder["quality_discount"]) + " /t",
+                      f'below {ladder["library_best"][:40]}', bad=True),
+        ui.stat_block("Annual tonnage",
+                      engine.tonnes(profile.get("annual_tpa", 0)),
+                      f'disposal Rs {profile.get("disposal_inr_t", 0):,.0f}/t'),
+    ], columns=4)
+
+    if profile.get("note"):
+        st.markdown(f'<div class="note">{profile["note"]}</div>',
+                    unsafe_allow_html=True)
+
+    left, right = st.columns([1, 2.1], gap="medium")
+
+    with left:
+        st.markdown(f'<div class="sect">{ui.tr("mg_composition")}</div>',
+                    unsafe_allow_html=True)
+        composition = pd.DataFrame([{
+            "property": materials.PROPERTY_LABELS.get(k, k),
+            "value": v,
+            "unit": materials.unit_for(k),
+        } for k, v in measured.items()])
+        st.dataframe(
+            composition, hide_index=True, width="stretch", height=430,
+            column_config={
+                "property": st.column_config.TextColumn("Property", width="medium"),
+                "value": st.column_config.NumberColumn("Value", format="%.3g"),
+                "unit": st.column_config.TextColumn("Unit", width="small"),
+            },
+        )
+        st.markdown(
+            '<p class="caveat">Representative composition for a stream of this '
+            'type, not an assay of a specific consignment. A real trade needs a '
+            'laboratory certificate for the actual material.</p>',
+            unsafe_allow_html=True,
+        )
+
+    with right:
+        st.markdown(f'<div class="sect">{ui.tr("mg_against")}</div>',
+                    unsafe_allow_html=True)
+        spec_summary = pd.DataFrame([{
+            "application": r["spec"],
+            "verdict": "PASS" if r["passes"] else "FAIL",
+            "grade": r["grade"],
+            "value_inr_t": r["value_inr_t"],
+            "binding property": (materials.PROPERTY_LABELS.get(
+                r["binding"]["property"], r["binding"]["property"])
+                if r["binding"] else "-"),
+            "headroom %": (r["binding"]["headroom_frac"] * 100
+                           if r["binding"] and r["binding"]["headroom_frac"] is not None
+                           else None),
+            "standard": r["standard"],
+            "basis": r["confidence"],
+        } for r in ladder["rungs"]])
+        st.dataframe(
+            spec_summary, hide_index=True, width="stretch", height=430,
+            column_config={
+                "application": st.column_config.TextColumn("Application",
+                                                           width="large"),
+                "verdict": st.column_config.TextColumn("Verdict", width="small"),
+                "grade": st.column_config.TextColumn("Grade", width="small"),
+                "value_inr_t": st.column_config.NumberColumn("Rs/t", format="%.0f",
+                                                             width="small"),
+                "binding property": st.column_config.TextColumn("Binding property",
+                                                                width="medium"),
+                "headroom %": st.column_config.NumberColumn("Headroom %",
+                                                            format="%.1f",
+                                                            width="small"),
+                "standard": st.column_config.TextColumn("Standard", width="medium"),
+                "basis": st.column_config.TextColumn("Basis", width="small"),
+            },
+        )
+        st.markdown(
+            '<p class="caveat">Grades: '
+            + " &middot; ".join(f"<strong>{k}</strong> {v}"
+                                for k, v in GRADE_MEANING.items())
+            + '. "Basis" is <strong>standard</strong> where the limit is taken '
+            'from the named standard, and <strong>indicative</strong> where no '
+            'single published number exists and the threshold reflects common '
+            'practice - never presented as if it were a code requirement.</p>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("---")
+    spec_names = [r["spec"] for r in ladder["rungs"]]
+    default_spec = (ladder["nearest_upgrade"]["spec"]
+                    if ladder["nearest_upgrade"] else spec_names[0])
+    picked_spec = st.selectbox(ui.tr("mg_detail"), spec_names,
+                               index=spec_names.index(default_spec),
+                               key="grade_spec")
+    report = conformance.grade(stream, picked_spec)
+
+    verdict_class = "" if report["passes"] else " loss"
+    if report["passes"]:
+        headline = (f'<strong>{stream}</strong> meets <strong>{picked_spec}</strong> '
+                    f'at grade {report["grade"]} - '
+                    f'{GRADE_MEANING[report["grade"]]}.')
+    else:
+        worst = report["failures"][0] if report["failures"] else None
+        if worst and worst["measured"]:
+            headline = (
+                f'<strong>{stream}</strong> does not meet '
+                f'<strong>{picked_spec}</strong>. It fails on '
+                f'{materials.PROPERTY_LABELS.get(worst["property"], worst["property"])}: '
+                f'the limit is {worst["operator"]} {worst["threshold"]:g} and this '
+                f'stream measures {worst["actual"]:g}, a shortfall of '
+                f'{abs(worst["margin"]):.3g} '
+                f'({abs(worst["headroom_frac"]) * 100:.0f}% of the limit).'
+            )
+            if len(report["failures"]) > 1:
+                headline += f' {len(report["failures"]) - 1} further limit(s) also fail.'
+        else:
+            headline = (f'<strong>{stream}</strong> cannot be assessed against '
+                        f'<strong>{picked_spec}</strong>: a required property is '
+                        'not measured for this stream.')
+    st.markdown(f'<div class="note{verdict_class}">{headline}</div>',
+                unsafe_allow_html=True)
+
+    st.dataframe(
+        limit_table(report), hide_index=True, width="stretch",
+        column_config={
+            "property": st.column_config.TextColumn("Property", width="medium"),
+            "required": st.column_config.TextColumn("Required", width="small"),
+            "actual": st.column_config.NumberColumn("Measured", format="%.4g",
+                                                    width="small"),
+            "margin": st.column_config.NumberColumn("Margin", format="%.4g",
+                                                    width="small"),
+            "headroom %": st.column_config.NumberColumn("Headroom %", format="%.1f",
+                                                        width="small"),
+            "verdict": st.column_config.TextColumn("Verdict", width="small"),
+            "basis": st.column_config.TextColumn("Basis of the limit", width="large"),
+        },
+    )
+    st.markdown(
+        f'<p class="caveat"><strong>{report["standard"]}</strong> &middot; '
+        f'basis: {report["confidence"]} &middot; value if it qualifies: '
+        f'{engine.inr(report["value_inr_t"])}/t. Margin is in the property\'s own '
+        'units; a positive margin is inside the limit. '
+        f'{report["note"]}</p>',
+        unsafe_allow_html=True,
+    )
+
 
 # ======================================================================
 # 1. Find my matches

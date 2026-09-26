@@ -34,6 +34,7 @@ STRINGS = {
               "अंग्रेज़ी में ही रहती हैं।"},
 
     # --- tabs ---
+    "tab_grading": {"en": "Material Grading", "hi": "सामग्री श्रेणीकरण"},
     "tab_mine": {"en": "Find My Matches", "hi": "मेरे मिलान खोजें"},
     "tab_network": {"en": "Exchange Network", "hi": "विनिमय नेटवर्क"},
     "tab_matches": {"en": "Ranked Matches", "hi": "क्रमित मिलान"},
@@ -135,6 +136,21 @@ STRINGS = {
     "gaps_resembles": {"en": "What this stream resembles", "hi": "यह धारा किससे मिलती है"},
     "gaps_uses": {"en": "Every recorded use for this stream",
                   "hi": "इस धारा के सभी अभिलिखित उपयोग"},
+
+    # --- material grading ---
+    "mg_heading": {"en": "Grade a by-product against every specification",
+                   "hi": "हर विनिर्देश के विरुद्ध उपोत्पाद का श्रेणीकरण"},
+    "mg_pick": {"en": "By-product stream", "hi": "उपोत्पाद धारा"},
+    "mg_composition": {"en": "Measured composition", "hi": "मापित संघटन"},
+    "mg_against": {"en": "Graded against the specification library",
+                   "hi": "विनिर्देश संग्रह के विरुद्ध श्रेणीकरण"},
+    "mg_detail": {"en": "Inspect a specification", "hi": "विनिर्देश की जाँच करें"},
+    "mg_qualifies": {"en": "Applications it qualifies for",
+                     "hi": "योग्य अनुप्रयोग"},
+    "mg_best": {"en": "Best qualifying use", "hi": "सर्वोत्तम योग्य उपयोग"},
+    "mg_discount": {"en": "Quality discount", "hi": "गुणवत्ता छूट"},
+    "mg_upgrade": {"en": "Closest rung not yet reached",
+                   "hi": "निकटतम अप्राप्त स्तर"},
 
     # --- method ---
     "method_scoring": {"en": "How a match is scored", "hi": "मिलान का अंकन कैसे होता है"},
