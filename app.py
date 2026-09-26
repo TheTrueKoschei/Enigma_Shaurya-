@@ -215,22 +215,26 @@ def flag_column(frame: pd.DataFrame) -> pd.Series:
     return pd.Series(flags, index=frame.index)
 
 
-def render_narrative(row):
-    """Verdict, chips, score breakdown and money - prose goes in the expander."""
-    story = explain.explain(row)
+def render_verdict(row):
+    """One sentence and the operational chips - fits a narrow column."""
     loss = float(row["net_value"]) < 0
-    score = float(row["score"])
-
     st.markdown(
         f'<div class="note{" loss" if loss else ""}">'
         f'<strong>{row["supplier"]} &rarr; {row["receiver"]}</strong>: '
         f'{engine.tonnes(row["matched_tpa"])} of {row["material"]} a year for '
-        f'{row["application"]}, scoring {score:.0f} and worth '
+        f'{row["application"]}, scoring {float(row["score"]):.0f} and worth '
         f'{engine.inr(row["net_value"])} a year.</div>',
         unsafe_allow_html=True,
     )
     st.markdown(match_chips(row), unsafe_allow_html=True)
 
+
+def render_detail_charts(row):
+    """Score composition and the money, given the full page width.
+
+    Kept out of render_verdict because these two need room: nested inside a
+    half-width column the legend collides with the axis.
+    """
     left, right = st.columns([1, 1], gap="medium")
     with left:
         st.plotly_chart(score_bar(row), width="stretch",
@@ -239,6 +243,8 @@ def render_narrative(row):
         st.plotly_chart(money_waterfall(row), width="stretch",
                         config={"displaylogo": False})
 
+    story = explain.explain(row)
+    loss = float(row["net_value"]) < 0
     with st.expander("Full assessment", expanded=False):
         st.markdown(f'<div class="note{" loss" if loss else ""}">'
                     f'{story["headline"]}</div>', unsafe_allow_html=True)
@@ -247,6 +253,12 @@ def render_narrative(row):
                         unsafe_allow_html=True)
             st.markdown(f'<p class="sec-body">{story["sections"][title]}</p>',
                         unsafe_allow_html=True)
+
+
+def render_narrative(row):
+    """Verdict then charts, for callers that have the full width already."""
+    render_verdict(row)
+    render_detail_charts(row)
 
 
 def render_audit(row):
@@ -498,13 +510,13 @@ def score_bar(row) -> go.Figure:
             hovertemplate=f"Not earned: {lost:.1f} points<extra></extra>",
         ))
     fig.update_layout(
-        barmode="stack", height=150, margin=dict(l=0, r=0, t=6, b=40),
+        barmode="stack", height=190, margin=dict(l=0, r=0, t=6, b=70),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font=CHART_FONT,
         xaxis=dict(range=[0, 100], showgrid=False, zeroline=False,
                    title="score out of 100"),
         yaxis=dict(showticklabels=False, showgrid=False),
-        legend=dict(orientation="h", yanchor="top", y=-0.45, x=0,
+        legend=dict(orientation="h", yanchor="top", y=-0.75, x=0,
                     font=dict(size=10)),
         hoverlabel=HOVER_STYLE,
     )
@@ -534,12 +546,12 @@ def money_waterfall(row) -> go.Figure:
     low = min(0.0, net, min(values)) * 1.25
     high = max(values + [net]) * 1.3
     fig.update_layout(
-        height=330, margin=dict(l=0, r=0, t=22, b=0),
+        height=330, margin=dict(l=0, r=0, t=22, b=10),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#ffffff", font=CHART_FONT,
         yaxis=dict(title="Rs per year", gridcolor="#e4e7ec", zeroline=True,
                    zerolinecolor="#1a1f2b", zerolinewidth=1,
                    range=[low, high]),
-        xaxis=dict(showgrid=False),
+        xaxis=dict(showgrid=False, tickangle=0, tickfont=dict(size=10)),
         showlegend=False, hoverlabel=HOVER_STYLE,
     )
     return fig
@@ -1429,7 +1441,8 @@ if section == "mine":
                 ui.tr("mine_download"), data=mine.to_csv(index=False).encode("utf-8"),
                 file_name="my_symbiosis_matches.csv", mime="text/csv", width="stretch")
             chosen = mine.iloc[labels.index(picked)]
-            render_narrative(chosen)
+            render_verdict(chosen)
+            render_detail_charts(chosen)
             with st.expander(ui.tr("audit"), expanded=False):
                 render_audit(chosen)
     else:
@@ -1692,9 +1705,9 @@ if section == "matches":
             m3.metric(ui.tr("net_value_yr"), engine.inr(row["net_value"]))
             m4.metric(ui.tr("co2_yr"), engine.tonnes(row["co2_avoided_t"]))
 
-            render_narrative(row)
+            render_verdict(row)
 
-        st.markdown("---")
+        render_detail_charts(row)
         with st.expander(ui.tr("audit"), expanded=False):
             render_audit(row)
 
