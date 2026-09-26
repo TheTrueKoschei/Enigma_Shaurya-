@@ -14,12 +14,10 @@ Symbiosis***
 **Team name:** Shaurya
 
 | Name | Role |
-|---|---|
-| _(fill in)_ | _(fill in)_ |
-| _(fill in)_ | _(fill in)_ |
-| _(fill in)_ | _(fill in)_ |
-| _(fill in)_ | _(fill in)_ |
-
+Capt Jai Lal 
+Capt Manpreet 
+Capt Sukhdev 
+Lt Tushar 
 ---
 
 ## Problem statement
