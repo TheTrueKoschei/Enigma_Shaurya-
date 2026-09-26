@@ -20,7 +20,7 @@ import streamlit as st
 import blending
 import carbon
 import conformance
-import coverage
+import reach
 import engine
 import explain
 import i18n
@@ -748,17 +748,17 @@ if facilities.empty:
 # problem is. A headline claiming a million companies over a 255-row registry
 # is the fastest way to lose an assessor, so the source sits next to the figure.
 # ----------------------------------------------------------------------
-reach = coverage.summary(facilities, kb, specs, materials)
+coverage_stats = reach.summary(facilities, kb, specs, materials)
 st.markdown(ui.chip_row([
-    ui.chip(f'<strong>{reach["loaded"]:,}</strong> facilities loaded', "accent"),
-    ui.chip(f'{reach["supplying"]} offering a by-product'),
-    ui.chip(f'{reach["sectors"]} sectors &middot; {reach["states"]} states'),
-    ui.chip(f'{reach["substitutions"]} substitutions &middot; '
-            f'{reach["specifications"]} specifications &middot; '
-            f'{reach["profiled_materials"]} property profiles'),
-    ui.chip(f'addressable: <strong>{reach["addressable_pretty"]}</strong> '
-            f'{reach["addressable_label"].lower()}', "good"),
-    ui.chip(f'source: {reach["addressable_source"]} &mdash; verify before quoting',
+    ui.chip(f'<strong>{coverage_stats["loaded"]:,}</strong> facilities loaded', "accent"),
+    ui.chip(f'{coverage_stats["supplying"]} offering a by-product'),
+    ui.chip(f'{coverage_stats["sectors"]} sectors &middot; {coverage_stats["states"]} states'),
+    ui.chip(f'{coverage_stats["substitutions"]} substitutions &middot; '
+            f'{coverage_stats["specifications"]} specifications &middot; '
+            f'{coverage_stats["profiled_materials"]} property profiles'),
+    ui.chip(f'addressable: <strong>{coverage_stats["addressable_pretty"]}</strong> '
+            f'{coverage_stats["addressable_label"].lower()}', "good"),
+    ui.chip(f'source: {coverage_stats["addressable_source"]} &mdash; verify before quoting',
             "warn"),
 ]), unsafe_allow_html=True)
 
@@ -2139,12 +2139,12 @@ if section == "method":
         pd.DataFrame([{
             "register": entry["label"],
             "count": entry["count"],
-            "as": coverage.format_count(entry["count"]),
+            "as": reach.format_count(entry["count"]),
             "source": entry["source"],
             "period": entry["period"],
             "verified in this build": "no",
             "what it means here": entry["caveat"],
-        } for entry in coverage.ADDRESSABLE.values()]),
+        } for entry in reach.ADDRESSABLE.values()]),
         hide_index=True, width="stretch",
         column_config={
             "register": st.column_config.TextColumn("Public register",
@@ -2162,12 +2162,12 @@ if section == "method":
     st.markdown(ui.chip_row([
         ui.chip("loaded and addressable are different numbers", "warn"),
         ui.chip("none of these were fetched live from this build", "warn"),
-        ui.chip("edit them in coverage.py before quoting", "warn"),
+        ui.chip("edit them in reach.py before quoting", "warn"),
     ]), unsafe_allow_html=True)
 
     if st.button("Run a capacity test", key="run_benchmark"):
         with st.spinner("Scoring a synthetic national registry..."):
-            st.session_state["benchmark"] = coverage.benchmark(facilities, 2000)
+            st.session_state["benchmark"] = reach.benchmark(facilities, 2000)
     bench = st.session_state.get("benchmark")
     if bench and bench.get("ran"):
         ui.stat_row([

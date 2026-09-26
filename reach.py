@@ -1,5 +1,10 @@
 """How much of Indian industry this tool can actually serve.
 
+Named `reach` rather than `coverage` deliberately: a local module called
+coverage.py shadows the widely installed coverage.py package on sys.path, which
+is a landmine in any hosted environment whose dependency chain happens to
+import it. The name is not worth the risk.
+
 There are two different numbers here and conflating them would be dishonest:
 
   LOADED      the facilities in the registry currently open. Counted live.

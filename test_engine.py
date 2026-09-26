@@ -903,10 +903,10 @@ def test_coordinates_are_all_inside_india(facilities):
 # ----------------------------------------------------------------------
 
 def test_coverage_separates_loaded_from_addressable(facilities):
-    import coverage
+    import reach
     import materials as materials_module
     import specs as specs_module
-    report = coverage.summary(facilities, kb, specs_module, materials_module)
+    report = reach.summary(facilities, kb, specs_module, materials_module)
     assert report["loaded"] == len(facilities)
     assert report["addressable_count"] > report["loaded"], (
         "addressable is the size of the problem, not the size of the demo"
@@ -916,9 +916,9 @@ def test_coverage_separates_loaded_from_addressable(facilities):
 
 def test_every_addressable_figure_carries_a_source_and_is_marked_unverified():
     """No headline number may appear without somewhere to check it."""
-    import coverage
-    assert coverage.ADDRESSABLE
-    for key, entry in coverage.ADDRESSABLE.items():
+    import reach
+    assert reach.ADDRESSABLE
+    for key, entry in reach.ADDRESSABLE.items():
         assert entry["count"] > 0, key
         assert entry["source"].strip(), key
         assert entry["period"].strip(), key
@@ -929,24 +929,24 @@ def test_every_addressable_figure_carries_a_source_and_is_marked_unverified():
 
 
 def test_indian_number_formatting():
-    import coverage
-    assert coverage.format_count(63_000_000) == "6.30 crore"
-    assert coverage.format_count(250_000) == "2.50 lakh"
-    assert coverage.format_count(80_000) == "80,000"
+    import reach
+    assert reach.format_count(63_000_000) == "6.30 crore"
+    assert reach.format_count(250_000) == "2.50 lakh"
+    assert reach.format_count(80_000) == "80,000"
 
 
 def test_benchmark_measures_rather_than_asserts(facilities):
-    import coverage
-    result = coverage.benchmark(facilities, size=150, seed=1)
+    import reach
+    result = reach.benchmark(facilities, size=150, seed=1)
     assert result["ran"]
     assert result["facilities"] == 150
     assert result["seconds"] > 0
     assert result["facilities_per_second"] > 0
     # deterministic for a fixed seed: the same synthetic registry each time
-    again = coverage.benchmark(facilities, size=150, seed=1)
+    again = reach.benchmark(facilities, size=150, seed=1)
     assert again["matches"] == result["matches"]
 
 
 def test_benchmark_on_an_empty_registry_is_safe():
-    import coverage
-    assert coverage.benchmark(pd.DataFrame(), 100)["ran"] is False
+    import reach
+    assert reach.benchmark(pd.DataFrame(), 100)["ran"] is False
